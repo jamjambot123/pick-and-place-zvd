@@ -26,6 +26,7 @@
 // ★ 웹 서버 추가용 라이브러리
 #include <WiFi.h>
 #include <WebServer.h>
+#include <Preferences.h>  // 플래시 메모리 저장용
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ██  섹션 1: 하드웨어 핀맵 선언 (부팅 간섭 없는 안전 GPIO만 사용)
@@ -138,6 +139,39 @@ volatile bool webCmd_SaveA = false;
 volatile bool webCmd_SaveB = false;
 volatile bool webCmd_ContinuousCycle = false;  // 무한 반복 플래그
 volatile int32_t cycleCount = 0;  // 완료된 사이클 수
+
+Preferences prefs;
+
+void saveTeachPoints() {
+  prefs.begin("teach", false);
+  prefs.putInt("a_base", pointA.steps_base);
+  prefs.putInt("a_sh", pointA.steps_shoulder);
+  prefs.putInt("a_el", pointA.steps_elbow);
+  prefs.putBool("a_ok", pointA.saved);
+  prefs.putInt("b_base", pointB.steps_base);
+  prefs.putInt("b_sh", pointB.steps_shoulder);
+  prefs.putInt("b_el", pointB.steps_elbow);
+  prefs.putBool("b_ok", pointB.saved);
+  prefs.putFloat("z_desc", zDescentMM);
+  prefs.end();
+  Serial.println("[FLASH] 티칭 데이터 저장 완료");
+}
+
+void loadTeachPoints() {
+  prefs.begin("teach", true);  // 읽기 전용
+  pointA.steps_base = prefs.getInt("a_base", 0);
+  pointA.steps_shoulder = prefs.getInt("a_sh", 0);
+  pointA.steps_elbow = prefs.getInt("a_el", 0);
+  pointA.saved = prefs.getBool("a_ok", false);
+  pointB.steps_base = prefs.getInt("b_base", 0);
+  pointB.steps_shoulder = prefs.getInt("b_sh", 0);
+  pointB.steps_elbow = prefs.getInt("b_el", 0);
+  pointB.saved = prefs.getBool("b_ok", false);
+  zDescentMM = prefs.getFloat("z_desc", 30.0f);
+  prefs.end();
+  Serial.printf("[FLASH] 티칭 로드: A=%s, B=%s, Z=%.0fmm\n",
+    pointA.saved ? "OK" : "X", pointB.saved ? "OK" : "X", zDescentMM);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ██  섹션 5: FreeRTOS & 제어 상태 상수
@@ -924,6 +958,7 @@ void taskControl(void* pv) {
           CartesianPoint p = solveFK();
           Serial.printf("[TEACH] Point A saved: steps(%d,%d,%d) pos(%.1f,%.1f,%.1f)\n",
             (int)pointA.steps_base, (int)pointA.steps_shoulder, (int)pointA.steps_elbow, p.x, p.y, p.z);
+          saveTeachPoints();
         }
         if (webCmd_SaveB) {
           webCmd_SaveB = false;
@@ -936,6 +971,7 @@ void taskControl(void* pv) {
           CartesianPoint p = solveFK();
           Serial.printf("[TEACH] Point B saved: steps(%d,%d,%d) pos(%.1f,%.1f,%.1f)\n",
             (int)pointB.steps_base, (int)pointB.steps_shoulder, (int)pointB.steps_elbow, p.x, p.y, p.z);
+          saveTeachPoints();
         }
         // 사이클 시작
         if (webCmd_ContinuousCycle) {
@@ -1115,6 +1151,7 @@ void setupWiFiAndWeb() {
       else if(cmd == "zdesc" && server.hasArg("val")) {
         zDescentMM = constrain(server.arg("val").toFloat(), 5.0f, 100.0f);
         Serial.printf("[CONFIG] Z descent = %.1f mm\n", zDescentMM);
+        saveTeachPoints();
       }
       else if(cmd == "estop") {
         webCmd_EStop = true;
@@ -1202,6 +1239,9 @@ void setup() {
 
   // 1. MPU 통신을 가장 먼저 시도하여 하드웨어 연결 상태 파악
   mpu6050_init();
+
+  // 티칭 데이터 플래시에서 복원
+  loadTeachPoints();
 
   // Common Anode 배선(PUL+가 5V)에서 3.3V 보드가 펄스를 확실히 끄기 위해 Open-Drain 필수
   pinMode(MOTOR1_BASE_STEP, OUTPUT_OPEN_DRAIN); pinMode(MOTOR1_BASE_DIR, OUTPUT_OPEN_DRAIN); pinMode(MOTOR1_BASE_ENA, OUTPUT_OPEN_DRAIN);
