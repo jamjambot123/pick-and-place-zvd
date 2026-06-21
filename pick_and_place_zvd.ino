@@ -151,6 +151,7 @@ volatile bool webCmd_ContinuousCycle = false;
 volatile int32_t cycleCount = 0;
 uint32_t gripDelayMs = 1500;    // 흡착 대기 (ms)
 uint32_t releaseDelayMs = 500;  // 해제 대기 (ms)
+uint32_t motionSpeedUs = 1500;  // 모션 속도 (us, 높을수록 느림)
 
 Preferences prefs;
 
@@ -172,6 +173,9 @@ void saveTeachPoints() {
   prefs.begin("teach", false);
   saveOnePoint("au", pointA_up); saveOnePoint("ad", pointA_down);
   saveOnePoint("bu", pointB_up); saveOnePoint("bd", pointB_down);
+  prefs.putULong("grip", gripDelayMs);
+  prefs.putULong("rel", releaseDelayMs);
+  prefs.putULong("spd", motionSpeedUs);
   prefs.end();
   Serial.println("[FLASH] 티칭 데이터 저장 완료");
 }
@@ -179,10 +183,14 @@ void loadTeachPoints() {
   prefs.begin("teach", true);
   loadOnePoint("au", pointA_up); loadOnePoint("ad", pointA_down);
   loadOnePoint("bu", pointB_up); loadOnePoint("bd", pointB_down);
+  gripDelayMs = prefs.getULong("grip", 1500);
+  releaseDelayMs = prefs.getULong("rel", 500);
+  motionSpeedUs = prefs.getULong("spd", 1500);
   prefs.end();
-  Serial.printf("[FLASH] 로드: A위=%s A아래=%s B위=%s B아래=%s\n",
+  Serial.printf("[FLASH] 로드: A위=%s A아래=%s B위=%s B아래=%s spd=%d grip=%d rel=%d\n",
     pointA_up.saved?"OK":"X", pointA_down.saved?"OK":"X",
-    pointB_up.saved?"OK":"X", pointB_down.saved?"OK":"X");
+    pointB_up.saved?"OK":"X", pointB_down.saved?"OK":"X",
+    (int)motionSpeedUs, (int)gripDelayMs, (int)releaseDelayMs);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -411,10 +419,11 @@ const char index_html[] PROGMEM = R"rawliteral(
       
       <div id="cycleInfo" class="data-row" style="margin-bottom:10px;"><span>사이클 횟수</span><span class="data-val">0</span></div>
       <div style="margin-bottom:15px;">
-        <h3 style="color:var(--text-dim); margin:0 0 8px; font-size:1rem;">⚙ 타이밍 설정</h3>
+        <h3 style="color:var(--text-dim); margin:0 0 8px; font-size:1rem;">⚙ 사이클 설정</h3>
+        <div class="data-row" style="margin-bottom:4px;"><span>모션속도(us)</span><input type="number" id="spdUs" class="jog-input" value="1500" min="500" max="5000" style="width:70px;"></div>
         <div class="data-row" style="margin-bottom:4px;"><span>흡착 대기(ms)</span><input type="number" id="gripMs" class="jog-input" value="1500" min="200" max="5000" style="width:70px;"></div>
         <div class="data-row" style="margin-bottom:4px;"><span>해제 대기(ms)</span><input type="number" id="relMs" class="jog-input" value="500" min="100" max="5000" style="width:70px;"></div>
-        <button class="btn btn-secondary" style="padding:6px;width:100%;" onclick="setTiming()">적용</button>
+        <button class="btn btn-secondary" style="padding:6px;width:100%;" onclick="setTiming()">💾 적용 & 저장</button>
       </div>
       <button class="btn btn-danger" style="width:100%;" onclick="sendCommand('startCycle')">🔄 무한 반복 사이클 시작</button>
     </div>
@@ -500,15 +509,19 @@ const char index_html[] PROGMEM = R"rawliteral(
           });
           const cycInfo = document.getElementById('cycleInfo');
           if(cycInfo) cycInfo.innerHTML = '<span>사이클 횟수</span><span class="data-val">'+data.cycles+'</span>';
+          if(initInputs && data.spd_us) document.getElementById('spdUs').value = data.spd_us;
+          if(initInputs && data.grip_ms) document.getElementById('gripMs').value = data.grip_ms;
+          if(initInputs && data.rel_ms) document.getElementById('relMs').value = data.rel_ms;
         }).catch(err => console.error(err));
     }
     function sendCommand(cmd) {
       fetch('/api/command?c=' + cmd, { method: 'POST' }).then(res => { if(res.ok) updateStatus(); });
     }
     function setTiming() {
+      const s = document.getElementById('spdUs').value || 1500;
       const g = document.getElementById('gripMs').value || 1500;
       const r = document.getElementById('relMs').value || 500;
-      fetch('/api/command?c=timing&grip='+g+'&rel='+r, { method:'POST' }).then(res => { if(res.ok) alert('흡착:'+g+'ms / 해제:'+r+'ms 적용'); });
+      fetch('/api/command?c=timing&spd='+s+'&grip='+g+'&rel='+r, { method:'POST' }).then(res => { if(res.ok) alert('속도:'+s+'us / 흡착:'+g+'ms / 해제:'+r+'ms 저장됨'); });
     }
 
     function testCmd(target, state) {
@@ -987,7 +1000,7 @@ void taskControl(void* pv) {
       case STATE_MOVE_TO_A: {
         Serial.printf("[CYCLE] → A위 (steps: %d,%d,%d)\n",
           (int)pointA_up.steps_base, (int)pointA_up.steps_shoulder, (int)pointA_up.steps_elbow);
-        MotionCommand cmd = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, 1500, false, false};
+        MotionCommand cmd = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, motionSpeedUs, false, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
@@ -999,7 +1012,7 @@ void taskControl(void* pv) {
       // ── A아래로 하강 (관절 직접 이동, IK 없음) ──
       case STATE_DESCEND_A: {
         Serial.println("[CYCLE] A↓");
-        MotionCommand cmd = {pointA_down.steps_base, pointA_down.steps_shoulder, pointA_down.steps_elbow, 1500, false, false};
+        MotionCommand cmd = {pointA_down.steps_base, pointA_down.steps_shoulder, pointA_down.steps_elbow, motionSpeedUs, false, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
@@ -1018,7 +1031,7 @@ void taskControl(void* pv) {
 
       // ── A위로 상승 ──
       case STATE_ASCEND_A: {
-        MotionCommand cmd = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, 1500, false, false};
+        MotionCommand cmd = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, motionSpeedUs, false, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
@@ -1031,7 +1044,7 @@ void taskControl(void* pv) {
       case STATE_MOVE_TO_B: {
         Serial.printf("[CYCLE] → B위 (steps: %d,%d,%d)\n",
           (int)pointB_up.steps_base, (int)pointB_up.steps_shoulder, (int)pointB_up.steps_elbow);
-        MotionCommand cmd = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, 1500, false, false};
+        MotionCommand cmd = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, motionSpeedUs, false, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
@@ -1043,7 +1056,7 @@ void taskControl(void* pv) {
       // ── B아래로 하강 ──
       case STATE_DESCEND_B: {
         Serial.println("[CYCLE] B↓");
-        MotionCommand cmd = {pointB_down.steps_base, pointB_down.steps_shoulder, pointB_down.steps_elbow, 1500, false, false};
+        MotionCommand cmd = {pointB_down.steps_base, pointB_down.steps_shoulder, pointB_down.steps_elbow, motionSpeedUs, false, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
@@ -1060,7 +1073,7 @@ void taskControl(void* pv) {
 
       // ── B위로 상승 후 반복 ──
       case STATE_ASCEND_B: {
-        MotionCommand cmd = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, 1500, false, false};
+        MotionCommand cmd = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, motionSpeedUs, false, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
@@ -1074,7 +1087,7 @@ void taskControl(void* pv) {
       // ── B아래로 하강 (다시 집기) ──
       case STATE_DESCEND_B2: {
         Serial.println("[CYCLE] B↓(집기)");
-        MotionCommand cmd = {pointB_down.steps_base, pointB_down.steps_shoulder, pointB_down.steps_elbow, 1500, false, false};
+        MotionCommand cmd = {pointB_down.steps_base, pointB_down.steps_shoulder, pointB_down.steps_elbow, motionSpeedUs, false, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
@@ -1091,7 +1104,7 @@ void taskControl(void* pv) {
         break;
 
       case STATE_ASCEND_B2: {
-        MotionCommand cmd = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, 1500, false, false};
+        MotionCommand cmd = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, motionSpeedUs, false, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
@@ -1103,7 +1116,7 @@ void taskControl(void* pv) {
       // ── A위로 복귀 ──
       case STATE_RETURN_A: {
         Serial.println("[CYCLE] →A위(복귀)");
-        MotionCommand cmd = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, 1500, false, false};
+        MotionCommand cmd = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, motionSpeedUs, false, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
@@ -1115,7 +1128,7 @@ void taskControl(void* pv) {
       // ── A아래로 하강 (놓기) ──
       case STATE_DESCEND_A2: {
         Serial.println("[CYCLE] A↓(놓기)");
-        MotionCommand cmd = {pointA_down.steps_base, pointA_down.steps_shoulder, pointA_down.steps_elbow, 1500, false, false};
+        MotionCommand cmd = {pointA_down.steps_base, pointA_down.steps_shoulder, pointA_down.steps_elbow, motionSpeedUs, false, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
@@ -1195,13 +1208,15 @@ void setupWiFiAndWeb() {
       "\"freq\":%.2f,\"zeta\":%.3f,"
       "\"ptAU\":%d,\"ptAD\":%d,\"ptBU\":%d,\"ptBD\":%d,\"cycles\":%d,"
       "\"sw_base\":%d,\"sw_shoulder\":%d,\"sw_elbow\":%d,"
-      "\"relay_pump\":%d,\"mpu_ok\":%d}",
+      "\"relay_pump\":%d,\"mpu_ok\":%d,"
+      "\"spd_us\":%d,\"grip_ms\":%d,\"rel_ms\":%d}",
       (int)currentState, stateStrings[currentState].c_str(),
       fk.x, fk.y, fk.z,
       md.ax, md.ay, md.az, md.gx, md.gy, md.gz,
       zvd_natural_freq_hz, zvd_damping_ratio,
       pointA_up.saved?1:0, pointA_down.saved?1:0, pointB_up.saved?1:0, pointB_down.saved?1:0, (int)cycleCount,
-      sb, ss, se, rp, mpu_connected ? 1 : 0);
+      sb, ss, se, rp, mpu_connected ? 1 : 0,
+      (int)motionSpeedUs, (int)gripDelayMs, (int)releaseDelayMs);
     server.send(200, "application/json", json);
   });
 
@@ -1225,15 +1240,22 @@ void setupWiFiAndWeb() {
         else if(cmd == "goBU" && pointB_up.saved) pt = &pointB_up;
         else if(cmd == "goBD" && pointB_down.saved) pt = &pointB_down;
         if (pt) {
-          MotionCommand mc = {pt->steps_base, pt->steps_shoulder, pt->steps_elbow, 800, false, false};
+          MotionCommand mc = {pt->steps_base, pt->steps_shoulder, pt->steps_elbow, motionSpeedUs, false, false};
           xQueueSend(motionQueue, &mc, pdMS_TO_TICKS(500));
           Serial.printf("[GOTO] %s -> steps(%d,%d,%d)\n", cmd.c_str(), (int)pt->steps_base, (int)pt->steps_shoulder, (int)pt->steps_elbow);
         } else { server.send(400, "text/plain", "NOT_SAVED"); return; }
       }
       else if(cmd == "timing") {
+        if (server.hasArg("spd")) motionSpeedUs = constrain(server.arg("spd").toInt(), 500, 5000);
         if (server.hasArg("grip")) gripDelayMs = constrain(server.arg("grip").toInt(), 200, 5000);
         if (server.hasArg("rel")) releaseDelayMs = constrain(server.arg("rel").toInt(), 100, 5000);
-        Serial.printf("[CONFIG] grip=%dms release=%dms\n", (int)gripDelayMs, (int)releaseDelayMs);
+        // 플래시 저장
+        prefs.begin("teach", false);
+        prefs.putULong("spd", motionSpeedUs);
+        prefs.putULong("grip", gripDelayMs);
+        prefs.putULong("rel", releaseDelayMs);
+        prefs.end();
+        Serial.printf("[CONFIG] spd=%dus grip=%dms rel=%dms (saved)\n", (int)motionSpeedUs, (int)gripDelayMs, (int)releaseDelayMs);
       }
       else if(cmd == "estop") {
         webCmd_EStop = true;
