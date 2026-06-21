@@ -353,12 +353,15 @@ const char index_html[] PROGMEM = R"rawliteral(
     <h2>📌 핀 배치도 (ESP32-S3)</h2>
     <table class="pin-table">
       <tr><th>기능</th><th>GPIO</th><th>연결 대상</th><th>비고</th></tr>
-      <tr class="cat-m"><td>Base STEP</td><td>4</td><td>TB6600 #1 PUL+</td><td rowspan="2">베이스 축</td></tr>
+      <tr class="cat-m"><td>Base STEP</td><td>4</td><td>TB6600 #1 PUL+</td><td rowspan="3">베이스 축</td></tr>
       <tr class="cat-m"><td>Base DIR</td><td>5</td><td>TB6600 #1 DIR+</td></tr>
-      <tr class="cat-m"><td>Shoulder STEP</td><td>6</td><td>TB6600 #2 PUL+</td><td rowspan="2">숄더 축</td></tr>
+      <tr class="cat-m"><td>Base ENA</td><td>8</td><td>TB6600 #1 ENA+</td></tr>
+      <tr class="cat-m"><td>Shoulder STEP</td><td>6</td><td>TB6600 #2 PUL+</td><td rowspan="3">숄더 축</td></tr>
       <tr class="cat-m"><td>Shoulder DIR</td><td>7</td><td>TB6600 #2 DIR+</td></tr>
-      <tr class="cat-m"><td>Elbow STEP</td><td>15</td><td>TB6600 #3 PUL+</td><td rowspan="2">엘보 축</td></tr>
+      <tr class="cat-m"><td>Shoulder ENA</td><td>9</td><td>TB6600 #2 ENA+</td></tr>
+      <tr class="cat-m"><td>Elbow STEP</td><td>15</td><td>TB6600 #3 PUL+</td><td rowspan="3">엘보 축</td></tr>
       <tr class="cat-m"><td>Elbow DIR</td><td>16</td><td>TB6600 #3 DIR+</td></tr>
+      <tr class="cat-m"><td>Elbow ENA</td><td>10</td><td>TB6600 #3 ENA+</td></tr>
       <tr class="cat-s"><td>Base Limit</td><td>1</td><td>리밋 스위치</td><td>NC (HIGH=눌림)</td></tr>
       <tr class="cat-s"><td>Shoulder Limit</td><td>2</td><td>리밋 스위치</td><td>NO (LOW=눌림)</td></tr>
       <tr class="cat-s"><td>Elbow Limit</td><td>47</td><td>리밋 스위치</td><td>NC (HIGH=눌림)</td></tr>
