@@ -28,10 +28,12 @@
 #include <WebServer.h>
 #include <Preferences.h>  // 플래시 메모리 저장용
 
-// ═══ 구조체 전방 선언 (모든 함수보다 앞에 위치해야 컴파일됨) ═══
+// ═══ 구조체/상수 전방 선언 (모든 함수보다 앞에 위치해야 컴파일됨) ═══
+#define ZVD_NUM_IMPULSES 3
 struct CartesianPoint { float x; float y; float z; };
 struct JointAngles { float base_deg; float shoulder_deg; float elbow_deg; bool valid; };
 struct MotionCommand { int32_t target_steps_base; int32_t target_steps_shoulder; int32_t target_steps_elbow; uint32_t step_interval_us; bool use_zvd; bool completed; };
+struct ZVD_Impulse { float amplitude[ZVD_NUM_IMPULSES]; float delay_ms[ZVD_NUM_IMPULSES]; };
 struct MPU6050_Data { float ax, ay, az; float gx, gy, gz; };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -125,7 +127,6 @@ struct MPU6050_Data { float ax, ay, az; float gx, gy, gz; };
 
 #define DEFAULT_NATURAL_FREQ_HZ   8.0f
 #define DEFAULT_DAMPING_RATIO     0.05f
-#define ZVD_NUM_IMPULSES          3
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ██  섹션 4: 픽앤플레이스 티칭 설정 (관절 스텝 저장 방식)
@@ -189,8 +190,7 @@ void loadTeachPoints() {
 #define TASK_STEPPER_PRIORITY 24
 #define MOTION_QUEUE_SIZE     8
 
-// ZVD 임펄스 구조체 (ZVD_NUM_IMPULSES 정의 후에 위치해야 함)
-struct ZVD_Impulse { float amplitude[ZVD_NUM_IMPULSES]; float delay_ms[ZVD_NUM_IMPULSES]; };
+
 
 enum PickPlaceState {
   STATE_HOMING = 0,
