@@ -78,7 +78,7 @@ struct MPU6050_Data { float ax, ay, az; float gx, gy, gz; };
 #define BASE_HEIGHT           0.0f
 
 #define STEPS_PER_REV         200
-#define MICROSTEPS            16      // ← TB6600 DIP 스위치를 3200(16분주)으로 맞추세요!
+#define MICROSTEPS            8
 
 #define MOTOR_GEAR_TEETH      20.0f
 #define MAIN_GEAR_TEETH_BASE  90.0f  // 원작 20sffactory 벨트 버전 기어비 (90T)
