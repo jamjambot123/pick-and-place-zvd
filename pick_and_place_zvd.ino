@@ -999,7 +999,7 @@ void taskControl(void* pv) {
       // ── A아래로 하강 (관절 직접 이동, IK 없음) ──
       case STATE_DESCEND_A: {
         Serial.println("[CYCLE] A↓");
-        MotionCommand cmd = {pointA_down.steps_base, pointA_down.steps_shoulder, pointA_down.steps_elbow, 1200, false, false};
+        MotionCommand cmd = {pointA_down.steps_base, pointA_down.steps_shoulder, pointA_down.steps_elbow, 2500, false, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
@@ -1041,7 +1041,7 @@ void taskControl(void* pv) {
       // ── B아래로 하강 ──
       case STATE_DESCEND_B: {
         Serial.println("[CYCLE] B↓");
-        MotionCommand cmd = {pointB_down.steps_base, pointB_down.steps_shoulder, pointB_down.steps_elbow, 1200, false, false};
+        MotionCommand cmd = {pointB_down.steps_base, pointB_down.steps_shoulder, pointB_down.steps_elbow, 2500, false, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
@@ -1072,7 +1072,7 @@ void taskControl(void* pv) {
       // ── B아래로 하강 (다시 집기) ──
       case STATE_DESCEND_B2: {
         Serial.println("[CYCLE] B↓(집기)");
-        MotionCommand cmd = {pointB_down.steps_base, pointB_down.steps_shoulder, pointB_down.steps_elbow, 1200, false, false};
+        MotionCommand cmd = {pointB_down.steps_base, pointB_down.steps_shoulder, pointB_down.steps_elbow, 2500, false, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
@@ -1111,7 +1111,7 @@ void taskControl(void* pv) {
       // ── A아래로 하강 (놓기) ──
       case STATE_DESCEND_A2: {
         Serial.println("[CYCLE] A↓(놓기)");
-        MotionCommand cmd = {pointA_down.steps_base, pointA_down.steps_shoulder, pointA_down.steps_elbow, 1200, false, false};
+        MotionCommand cmd = {pointA_down.steps_base, pointA_down.steps_shoulder, pointA_down.steps_elbow, 2500, false, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
