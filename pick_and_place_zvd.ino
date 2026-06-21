@@ -45,10 +45,10 @@
 #define LIMIT_SHOULDER        2    // 숄더 영점 스위치
 #define LIMIT_ELBOW           47   // 엘보 영점 스위치
 
-// 스위치 극성 (NC 배선 = HIGH when pressed, NO 배선 = LOW when pressed)
-#define LIMIT_BASE_ACTIVE     HIGH
-#define LIMIT_SHOULDER_ACTIVE LOW
-#define LIMIT_ELBOW_ACTIVE    HIGH
+// 스위치 논리 (NC=평상시 LOW, 눌림 HIGH / NO=평상시 HIGH, 눌림 LOW)
+#define LIMIT_BASE_ACTIVE     HIGH // NC
+#define LIMIT_SHOULDER_ACTIVE HIGH // NC
+#define LIMIT_ELBOW_ACTIVE    LOW  // NO
 
 #define RELAY_VACUUM_PUMP     21   // 진공 펌프 릴레이 제어 핀
 // 릴레이 작동 로직 (Low-Level Trigger: LOW=켜짐, HIGH=오픈드레인 꺼짐)
