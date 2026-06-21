@@ -121,23 +121,23 @@
 #define ZVD_NUM_IMPULSES          3
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ██  섹션 4: 픽앤플레이스 좌표 설정 (전역 변수)
+// ██  섹션 4: 픽앤플레이스 티칭 설정 (관절 스텝 저장 방식)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// 웹 GUI 및 시리얼 통신으로 동적 변경 가능
-float POINT_A_X = 100.0f;
-float POINT_A_Y = 100.0f;
-float POINT_A_Z = 30.0f;
-float POINT_A_Z_ABOVE = 80.0f;
-
-float POINT_B_X = -100.0f;
-float POINT_B_Y = 100.0f;
-float POINT_B_Z = 30.0f;
-float POINT_B_Z_ABOVE = 80.0f;
-
-#define HOME_X                0.0f
-#define HOME_Y                (HIGH_SHANK_LENGTH + END_EFFECTOR_OFFSET)  // 174mm
-#define HOME_Z                LOW_SHANK_LENGTH                           // 120mm
+// 티칭된 위치 (관절 스텝 카운터로 저장 — IK 불필요)
+struct TeachPoint {
+  int32_t steps_base;
+  int32_t steps_shoulder;
+  int32_t steps_elbow;
+  bool saved;
+};
+TeachPoint pointA = {0, 0, 0, false};
+TeachPoint pointB = {0, 0, 0, false};
+float zDescentMM = 30.0f;       // Z 하강 거리 (mm) — 이 부분만 IK 사용
+volatile bool webCmd_SaveA = false;
+volatile bool webCmd_SaveB = false;
+volatile bool webCmd_ContinuousCycle = false;  // 무한 반복 플래그
+volatile int32_t cycleCount = 0;  // 완료된 사이클 수
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ██  섹션 5: FreeRTOS & 제어 상태 상수
@@ -157,16 +157,19 @@ struct MPU6050_Data { float ax, ay, az; float gx, gy, gz; };
 
 enum PickPlaceState {
   STATE_HOMING = 0,
-  STATE_IDLE,                 // 대기 상태 (웹에서 시작 명령 대기)
-  STATE_APPROACH,             // Point A 접근
-  STATE_PICK,                 // 진공 흡착
-  STATE_TRANSFER,             // Point B 이동 (ZVD)
-  STATE_PLACE_RELEASE,        // 배치 & 진공 해제
-  STATE_RETURN                // 홈 복귀
+  STATE_IDLE,
+  STATE_MOVE_TO_A,    // A 위치로 관절 이동
+  STATE_DESCEND_A,    // A에서 Z 하강 (IK)
+  STATE_PICK,         // 진공 흡착
+  STATE_ASCEND_A,     // A에서 Z 상승 (IK)
+  STATE_MOVE_TO_B,    // B 위치로 관절 이동
+  STATE_DESCEND_B,    // B에서 Z 하강 (IK)
+  STATE_PLACE,        // 진공 해제
+  STATE_ASCEND_B      // B에서 Z 상승 (IK)
 };
 
 volatile PickPlaceState currentState = STATE_IDLE;
-String stateStrings[] = {"Homing...", "IDLE", "Approach A", "Picking", "Transfer (ZVD)", "Place & Release", "Return Home"};
+String stateStrings[] = {"Homing...", "IDLE", "→A", "A↓", "Pick", "A↑", "→B", "B↓", "Place", "B↑"};
 
 // 웹 서버 인스턴스 (포트 80)
 WebServer server(80);
@@ -180,7 +183,6 @@ volatile bool webCmd_EStop = false;  // 비상정지 플래그
 portMUX_TYPE stepsMux = portMUX_INITIALIZER_UNLOCKED;  // FK 읽기용 스핀락
 
 // 웹 제어 트리거
-volatile bool webCmd_StartCycle = false;
 volatile bool webCmd_Rehome = false;
 volatile bool webCmd_TuneZVD = false;
 volatile char webCmd_JogXYZ_Axis = 0;
@@ -325,7 +327,6 @@ const char index_html[] PROGMEM = R"rawliteral(
       </div>
       
       <div style="margin-top: 30px;">
-        <button class="btn btn-danger" onclick="sendCommand('start')">🚀 1 사이클 시작</button>
         <div class="grid-2">
           <button class="btn btn-secondary" onclick="sendCommand('rehome')">⌂ 강제 호밍</button>
           <button class="btn btn-secondary" onclick="sendCommand('tune')">∿ ZVD 튜닝</button>
@@ -334,25 +335,31 @@ const char index_html[] PROGMEM = R"rawliteral(
       </div>
     </div>
     
-    <!-- 우측 패널: 좌표 설정 -->
+    <!-- 우측 패널: 티칭 설정 -->
     <div class="glass-card">
-      <h2>피킹/배치 좌표 설정</h2>
+      <h2>📍 티칭 (위치 저장)</h2>
+      <p style="color:var(--text-dim);font-size:0.85rem;margin:0 0 15px;">관절 조그로 원하는 위치에 팔을 놓은 후 저장 버튼을 누르세요.</p>
       
       <div style="margin-bottom: 20px;">
-        <h3 style="color:var(--primary); margin: 0 0 10px 0; font-size: 1rem;">Point A (피킹)</h3>
-        <div class="input-group"><label>X</label><input type="number" id="ax" step="1"></div>
-        <div class="input-group"><label>Y</label><input type="number" id="ay" step="1"></div>
-        <div class="input-group"><label>Z</label><input type="number" id="az" step="1"></div>
-        <button class="btn btn-secondary" style="padding: 8px;" onclick="setPoint('A')">Point A 적용</button>
+        <h3 style="color:var(--primary); margin: 0 0 8px 0; font-size: 1rem;">Point A (피킹 위치)</h3>
+        <div id="ptA_info" class="data-row"><span>상태</span><span class="data-val" style="color:#f43f5e;">미저장</span></div>
+        <button class="btn btn-secondary" style="padding:8px;width:100%;" onclick="sendCommand('saveA')">📌 현재 위치를 A로 저장</button>
       </div>
       
-      <div>
-        <h3 style="color:var(--accent); margin: 0 0 10px 0; font-size: 1rem;">Point B (배치)</h3>
-        <div class="input-group"><label>X</label><input type="number" id="bx" step="1"></div>
-        <div class="input-group"><label>Y</label><input type="number" id="by" step="1"></div>
-        <div class="input-group"><label>Z</label><input type="number" id="bz" step="1"></div>
-        <button class="btn btn-secondary" style="padding: 8px;" onclick="setPoint('B')">Point B 적용</button>
+      <div style="margin-bottom: 20px;">
+        <h3 style="color:var(--accent); margin: 0 0 8px 0; font-size: 1rem;">Point B (배치 위치)</h3>
+        <div id="ptB_info" class="data-row"><span>상태</span><span class="data-val" style="color:#f43f5e;">미저장</span></div>
+        <button class="btn btn-secondary" style="padding:8px;width:100%;" onclick="sendCommand('saveB')">📌 현재 위치를 B로 저장</button>
       </div>
+      
+      <div style="margin-bottom:15px;">
+        <h3 style="color:var(--text-dim); margin: 0 0 8px 0; font-size: 1rem;">Z 하강 거리 (mm)</h3>
+        <div class="input-group"><label>mm</label><input type="number" id="zDesc" value="30" min="5" max="100" step="1"></div>
+        <button class="btn btn-secondary" style="padding:8px;" onclick="setZdesc()">적용</button>
+      </div>
+      
+      <div id="cycleInfo" class="data-row" style="margin-bottom:10px;"><span>사이클 횟수</span><span class="data-val">0</span></div>
+      <button class="btn btn-danger" style="width:100%;" onclick="sendCommand('startCycle')">🔄 무한 반복 사이클 시작</button>
     </div>
   </div>
 
@@ -364,15 +371,15 @@ const char index_html[] PROGMEM = R"rawliteral(
       <tr class="cat-m"><td>Base STEP</td><td>4</td><td>TB6600 #1 PUL+</td><td rowspan="3">베이스 축</td></tr>
       <tr class="cat-m"><td>Base DIR</td><td>5</td><td>TB6600 #1 DIR+</td></tr>
       <tr class="cat-m"><td>Base ENA</td><td>8</td><td>TB6600 #1 ENA+</td></tr>
-      <tr class="cat-m"><td>Shoulder STEP</td><td>6</td><td>TB6600 #2 PUL+</td><td rowspan="3">숄더 축</td></tr>
-      <tr class="cat-m"><td>Shoulder DIR</td><td>7</td><td>TB6600 #2 DIR+</td></tr>
-      <tr class="cat-m"><td>Shoulder ENA</td><td>9</td><td>TB6600 #2 ENA+</td></tr>
-      <tr class="cat-m"><td>Elbow STEP</td><td>15</td><td>TB6600 #3 PUL+</td><td rowspan="3">엘보 축</td></tr>
-      <tr class="cat-m"><td>Elbow DIR</td><td>16</td><td>TB6600 #3 DIR+</td></tr>
-      <tr class="cat-m"><td>Elbow ENA</td><td>10</td><td>TB6600 #3 ENA+</td></tr>
-      <tr class="cat-s"><td>Base Limit</td><td>1</td><td>리밋 스위치</td><td>NC (HIGH=눌림)</td></tr>
-      <tr class="cat-s"><td>Shoulder Limit</td><td>2</td><td>리밋 스위치</td><td>NO (LOW=눌림)</td></tr>
-      <tr class="cat-s"><td>Elbow Limit</td><td>47</td><td>리밋 스위치</td><td>NC (HIGH=눌림)</td></tr>
+      <tr class=\"cat-m\"><td>Shoulder STEP</td><td>15</td><td>TB6600 #2 PUL+</td><td rowspan=\"3\">숄더 축 (몸체쪽)</td></tr>
+      <tr class=\"cat-m\"><td>Shoulder DIR</td><td>16</td><td>TB6600 #2 DIR+</td></tr>
+      <tr class=\"cat-m\"><td>Shoulder ENA</td><td>10</td><td>TB6600 #2 ENA+</td></tr>
+      <tr class=\"cat-m\"><td>Elbow STEP</td><td>6</td><td>TB6600 #3 PUL+</td><td rowspan=\"3\">엘보 축 (끝단쪽)</td></tr>
+      <tr class=\"cat-m\"><td>Elbow DIR</td><td>7</td><td>TB6600 #3 DIR+</td></tr>
+      <tr class=\"cat-m\"><td>Elbow ENA</td><td>9</td><td>TB6600 #3 ENA+</td></tr>
+      <tr class=\"cat-s\"><td>Base Limit</td><td>1</td><td>리밋 스위치</td><td>NC (HIGH=눌림)</td></tr>
+      <tr class=\"cat-s\"><td>Shoulder Limit</td><td>47</td><td>리밋 스위치</td><td>NO (LOW=눌림)</td></tr>
+      <tr class=\"cat-s\"><td>Elbow Limit</td><td>2</td><td>리밋 스위치</td><td>NC (HIGH=눌림)</td></tr>
       <tr class="cat-r"><td>Vacuum Pump</td><td>21</td><td>릴레이 #1 IN</td><td>LOW=가동 (Open-Drain)</td></tr>
       <tr class="cat-i"><td>MPU6050 SDA</td><td>17</td><td>MPU6050</td><td rowspan="2">I2C 3.3V</td></tr>
       <tr class="cat-i"><td>MPU6050 SCL</td><td>18</td><td>MPU6050</td></tr>
@@ -447,25 +454,21 @@ const char index_html[] PROGMEM = R"rawliteral(
           ['ax','ay','az','gx','gy','gz'].forEach(k => { const el=document.getElementById('m_'+k); if(el && data[k]!=null) el.innerText=data[k].toFixed(2); });
           const ms=document.getElementById('mpu_st'); if(ms){ms.innerText=data.mpu_ok?'CONNECTED':'DISCONNECTED'; ms.style.color=data.mpu_ok?'#10b981':'#f43f5e';}
           document.getElementById('rp_dot').className = data.relay_pump ? 'relay-dot active' : 'relay-dot';
-          if(initInputs) {
-            document.getElementById('ax').value = data.pt_A.x;
-            document.getElementById('ay').value = data.pt_A.y;
-            document.getElementById('az').value = data.pt_A.z;
-            document.getElementById('bx').value = data.pt_B.x;
-            document.getElementById('by').value = data.pt_B.y;
-            document.getElementById('bz').value = data.pt_B.z;
-          }
+          // 티칭 상태 표시
+          const ptAInfo = document.getElementById('ptA_info');
+          if(ptAInfo) ptAInfo.innerHTML = '<span>상태</span><span class="data-val" style="color:'+(data.ptA_saved?'#10b981':'#f43f5e')+';">'+(data.ptA_saved?'✅ 저장됨':'❌ 미저장')+'</span>';
+          const ptBInfo = document.getElementById('ptB_info');
+          if(ptBInfo) ptBInfo.innerHTML = '<span>상태</span><span class="data-val" style="color:'+(data.ptB_saved?'#10b981':'#f43f5e')+';">'+(data.ptB_saved?'✅ 저장됨':'❌ 미저장')+'</span>';
+          const cycInfo = document.getElementById('cycleInfo');
+          if(cycInfo) cycInfo.innerHTML = '<span>사이클 횟수</span><span class="data-val">'+data.cycles+'</span>';
         }).catch(err => console.error(err));
     }
     function sendCommand(cmd) {
-      fetch('/api/command?c=' + cmd, { method: 'POST' }).then(res => { if(res.ok) alert('OK: ' + cmd); updateStatus(); });
+      fetch('/api/command?c=' + cmd, { method: 'POST' }).then(res => { if(res.ok) updateStatus(); });
     }
-    function setPoint(t) {
-      const f = new URLSearchParams();
-      f.append('x', document.getElementById(t.toLowerCase()+'x').value);
-      f.append('y', document.getElementById(t.toLowerCase()+'y').value);
-      f.append('z', document.getElementById(t.toLowerCase()+'z').value);
-      fetch('/api/set'+t, { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:f }).then(r => { if(r.ok) alert('Point '+t+' OK'); });
+    function setZdesc() {
+      const v = document.getElementById('zDesc').value || 30;
+      fetch('/api/command?c=zdesc&val='+v, { method:'POST' }).then(r => { if(r.ok) alert('Z하강 '+v+'mm 적용'); });
     }
     function testCmd(target, state) {
       const f = new URLSearchParams(); f.append('target',target); f.append('state',state);
@@ -868,6 +871,7 @@ void taskControl(void* pv) {
     // 우선적인 웹 명령 처리
     if (webCmd_EStop) {
       webCmd_EStop = false;
+      webCmd_ContinuousCycle = false;  // 사이클 중단
       digitalWrite(RELAY_VACUUM_PUMP, RELAY_OFF);
       motorsDisable();  // 모터 비활성화 (홀딩토크 OFF, 자유 회전)
       currentState = STATE_IDLE;
@@ -891,6 +895,7 @@ void taskControl(void* pv) {
         break;
 
       case STATE_IDLE:
+        // 직교 조그 처리
         if (webCmd_JogXYZ_Axis != 0) {
           if (!isHomed) {
             Serial.println("[ERROR] Must HOME before using Cartesian XYZ Jog!");
@@ -902,48 +907,142 @@ void taskControl(void* pv) {
             if (webCmd_JogXYZ_Axis == 'y') ty += webCmd_JogXYZ_Dist;
             if (webCmd_JogXYZ_Axis == 'z') tz += webCmd_JogXYZ_Dist;
             webCmd_JogXYZ_Axis = 0;
-            // 직교 좌표 이동 속도를 기존 1000us에서 1500us로 더 낮춰서 돌발 움직임 방지
             if (!moveLinearXYZ(tx, ty, tz, 1500)) {
               Serial.println("IK fail (out of range)");
             }
           }
         }
-        if (webCmd_StartCycle) {
-          webCmd_StartCycle = false;
-          // 사이클 진입 전 릴레이 초기화 (테스트 모드에서 수동 ON 했을 수 있음)
-          digitalWrite(RELAY_VACUUM_PUMP, RELAY_OFF);
-          currentState = STATE_APPROACH;
+        // 위치 저장 처리
+        if (webCmd_SaveA) {
+          webCmd_SaveA = false;
+          portENTER_CRITICAL(&stepsMux);
+          pointA.steps_base = currentSteps_base;
+          pointA.steps_shoulder = currentSteps_shoulder;
+          pointA.steps_elbow = currentSteps_elbow;
+          portEXIT_CRITICAL(&stepsMux);
+          pointA.saved = true;
+          CartesianPoint p = solveFK();
+          Serial.printf("[TEACH] Point A saved: steps(%d,%d,%d) pos(%.1f,%.1f,%.1f)\n",
+            (int)pointA.steps_base, (int)pointA.steps_shoulder, (int)pointA.steps_elbow, p.x, p.y, p.z);
+        }
+        if (webCmd_SaveB) {
+          webCmd_SaveB = false;
+          portENTER_CRITICAL(&stepsMux);
+          pointB.steps_base = currentSteps_base;
+          pointB.steps_shoulder = currentSteps_shoulder;
+          pointB.steps_elbow = currentSteps_elbow;
+          portEXIT_CRITICAL(&stepsMux);
+          pointB.saved = true;
+          CartesianPoint p = solveFK();
+          Serial.printf("[TEACH] Point B saved: steps(%d,%d,%d) pos(%.1f,%.1f,%.1f)\n",
+            (int)pointB.steps_base, (int)pointB.steps_shoulder, (int)pointB.steps_elbow, p.x, p.y, p.z);
+        }
+        // 사이클 시작
+        if (webCmd_ContinuousCycle) {
+          if (!isHomed || !pointA.saved || !pointB.saved) {
+            Serial.println("[ERROR] HOME + Point A/B 모두 저장 필요!");
+            webCmd_ContinuousCycle = false;
+          } else {
+            digitalWrite(RELAY_VACUUM_PUMP, RELAY_OFF);
+            cycleCount = 0;
+            currentState = STATE_MOVE_TO_A;
+            Serial.println("[CYCLE] 무한 반복 사이클 시작!");
+          }
         }
         break;
 
-      case STATE_APPROACH:
-        if (!isHomed) { currentState = STATE_IDLE; break; }
-        if (!moveLinearXYZ(POINT_A_X, POINT_A_Y, POINT_A_Z_ABOVE, 1000) ||
-            !moveLinearXYZ(POINT_A_X, POINT_A_Y, POINT_A_Z, 1200)) { currentState = STATE_RETURN; break; }
+      // ── 사이클: A로 이동 (관절 직접 이동, IK 없음) ──
+      case STATE_MOVE_TO_A: {
+        Serial.printf("[CYCLE] Moving to A (steps: %d,%d,%d)\n",
+          (int)pointA.steps_base, (int)pointA.steps_shoulder, (int)pointA.steps_elbow);
+        MotionCommand cmd = {pointA.steps_base, pointA.steps_shoulder, pointA.steps_elbow, 800, true, false};
+        if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
+          xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+        }
+        delay(200);
+        currentState = STATE_DESCEND_A;
+        break;
+      }
+
+      // ── A에서 Z 하강 (짧은 거리, IK 사용) ──
+      case STATE_DESCEND_A: {
+        CartesianPoint cur = solveFK();
+        if (!moveLinearXYZ(cur.x, cur.y, cur.z - zDescentMM, 1200)) {
+          Serial.println("[CYCLE] A descend IK fail!");
+          webCmd_ContinuousCycle = false;
+          currentState = STATE_IDLE;
+          break;
+        }
         currentState = STATE_PICK;
         break;
+      }
 
+      // ── 진공 흡착 ──
       case STATE_PICK:
         vacuumGrip(500);
-        if (!moveLinearXYZ(POINT_A_X, POINT_A_Y, POINT_A_Z_ABOVE, 400)) { digitalWrite(RELAY_VACUUM_PUMP, RELAY_OFF); currentState = STATE_RETURN; break; }
-        currentState = STATE_TRANSFER;
+        currentState = STATE_ASCEND_A;
         break;
 
-      case STATE_TRANSFER:
-        if (!moveToXYZ(POINT_B_X, POINT_B_Y, POINT_B_Z_ABOVE, true, 800) ||
-            !moveLinearXYZ(POINT_B_X, POINT_B_Y, POINT_B_Z, 1200)) { vacuumRelease(200); currentState = STATE_RETURN; break; }
-        currentState = STATE_PLACE_RELEASE;
+      // ── A에서 Z 상승 (저장된 A 위치로 복귀) ──
+      case STATE_ASCEND_A: {
+        MotionCommand cmd = {pointA.steps_base, pointA.steps_shoulder, pointA.steps_elbow, 800, true, false};
+        if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
+          xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+        }
+        delay(200);
+        currentState = STATE_MOVE_TO_B;
         break;
+      }
 
-      case STATE_PLACE_RELEASE:
+      // ── B로 이동 (관절 직접 이동, IK 없음) ──
+      case STATE_MOVE_TO_B: {
+        Serial.printf("[CYCLE] Moving to B (steps: %d,%d,%d)\n",
+          (int)pointB.steps_base, (int)pointB.steps_shoulder, (int)pointB.steps_elbow);
+        MotionCommand cmd = {pointB.steps_base, pointB.steps_shoulder, pointB.steps_elbow, 800, true, false};
+        if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
+          xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+        }
+        delay(200);
+        currentState = STATE_DESCEND_B;
+        break;
+      }
+
+      // ── B에서 Z 하강 ──
+      case STATE_DESCEND_B: {
+        CartesianPoint cur = solveFK();
+        if (!moveLinearXYZ(cur.x, cur.y, cur.z - zDescentMM, 1200)) {
+          Serial.println("[CYCLE] B descend IK fail!");
+          vacuumRelease(200);
+          webCmd_ContinuousCycle = false;
+          currentState = STATE_IDLE;
+          break;
+        }
+        currentState = STATE_PLACE;
+        break;
+      }
+
+      // ── 진공 해제 ──
+      case STATE_PLACE:
         vacuumRelease(200);
-        moveLinearXYZ(POINT_B_X, POINT_B_Y, POINT_B_Z_ABOVE, 1000);
-        currentState = STATE_RETURN;
+        currentState = STATE_ASCEND_B;
         break;
 
-      case STATE_RETURN:
-        moveToXYZ(HOME_X, HOME_Y, HOME_Z, true, 800);
-        currentState = STATE_IDLE; // 한 사이클 끝내고 다시 대기
+      // ── B에서 Z 상승 후 반복 ──
+      case STATE_ASCEND_B: {
+        MotionCommand cmd = {pointB.steps_base, pointB.steps_shoulder, pointB.steps_elbow, 800, true, false};
+        if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
+          xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+        }
+        delay(200);
+        cycleCount++;
+        Serial.printf("[CYCLE] 사이클 #%d 완료!\n", (int)cycleCount);
+        if (webCmd_ContinuousCycle) {
+          currentState = STATE_MOVE_TO_A;  // 무한 반복
+        } else {
+          currentState = STATE_IDLE;  // E-STOP으로 중단됨
+        }
+        break;
+      }
         break;
     }
 
@@ -992,14 +1091,14 @@ void setupWiFiAndWeb() {
       "\"cur_pos\":{\"x\":%.1f,\"y\":%.1f,\"z\":%.1f},"
       "\"ax\":%.3f,\"ay\":%.3f,\"az\":%.3f,\"gx\":%.2f,\"gy\":%.2f,\"gz\":%.2f,"
       "\"freq\":%.2f,\"zeta\":%.3f,"
-      "\"pt_A\":{\"x\":%.1f,\"y\":%.1f,\"z\":%.1f},\"pt_B\":{\"x\":%.1f,\"y\":%.1f,\"z\":%.1f},"
+      "\"ptA_saved\":%d,\"ptB_saved\":%d,\"cycles\":%d,\"z_desc\":%.0f,"
       "\"sw_base\":%d,\"sw_shoulder\":%d,\"sw_elbow\":%d,"
       "\"relay_pump\":%d,\"mpu_ok\":%d}",
       (int)currentState, stateStrings[currentState].c_str(),
       fk.x, fk.y, fk.z,
       md.ax, md.ay, md.az, md.gx, md.gy, md.gz,
       zvd_natural_freq_hz, zvd_damping_ratio,
-      POINT_A_X, POINT_A_Y, POINT_A_Z, POINT_B_X, POINT_B_Y, POINT_B_Z,
+      pointA.saved ? 1 : 0, pointB.saved ? 1 : 0, (int)cycleCount, zDescentMM,
       sb, ss, se, rp, mpu_connected ? 1 : 0);
     server.send(200, "application/json", json);
   });
@@ -1008,33 +1107,21 @@ void setupWiFiAndWeb() {
   server.on("/api/command", HTTP_POST, [](){
     if(server.hasArg("c")){
       String cmd = server.arg("c");
-      if(cmd == "start") webCmd_StartCycle = true;
+      if(cmd == "startCycle") webCmd_ContinuousCycle = true;
+      else if(cmd == "saveA") webCmd_SaveA = true;
+      else if(cmd == "saveB") webCmd_SaveB = true;
       else if(cmd == "rehome") webCmd_Rehome = true;
       else if(cmd == "tune") webCmd_TuneZVD = true;
+      else if(cmd == "zdesc" && server.hasArg("val")) {
+        zDescentMM = constrain(server.arg("val").toFloat(), 5.0f, 100.0f);
+        Serial.printf("[CONFIG] Z descent = %.1f mm\n", zDescentMM);
+      }
       else if(cmd == "estop") {
         webCmd_EStop = true;
+        webCmd_ContinuousCycle = false;  // 사이클 중단
         digitalWrite(RELAY_VACUUM_PUMP, RELAY_OFF);
         Serial.println("[CMD] E-STOP received!");
       }
-    }
-    server.send(200, "text/plain", "OK");
-  });
-
-  // 4. 위치 설정 API
-  server.on("/api/setA", HTTP_POST, [](){
-    if(server.hasArg("x") && server.hasArg("y") && server.hasArg("z")) {
-      POINT_A_X = server.arg("x").toFloat();
-      POINT_A_Y = server.arg("y").toFloat();
-      POINT_A_Z = server.arg("z").toFloat();
-    }
-    server.send(200, "text/plain", "OK");
-  });
-  
-  server.on("/api/setB", HTTP_POST, [](){
-    if(server.hasArg("x") && server.hasArg("y") && server.hasArg("z")) {
-      POINT_B_X = server.arg("x").toFloat();
-      POINT_B_Y = server.arg("y").toFloat();
-      POINT_B_Z = server.arg("z").toFloat();
     }
     server.send(200, "text/plain", "OK");
   });
@@ -1062,8 +1149,9 @@ void setupWiFiAndWeb() {
         if (target == "jog_base") { digitalWrite(MOTOR1_BASE_ENA, HIGH); delayMicroseconds(50); }
         
         int dir = (state > 0) ? 1 : -1;
-        // Common Anode로 인해 DIR 논리 반전 (state > 0 이면 LOW). 단 숄더는 추가 반전.
-        if (target == "jog_shoulder") {
+        // Common Anode로 인해 DIR 논리 반전 (state > 0 이면 LOW).
+        // GPIO 6/7 모터(엘보우)만 추가 반전 필요.
+        if (target == "jog_elbow") {
           digitalWrite(pinDir, state > 0 ? HIGH : LOW);
         } else {
           digitalWrite(pinDir, state > 0 ? LOW : HIGH);
