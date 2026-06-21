@@ -34,21 +34,21 @@
 #define MOTOR1_BASE_STEP      4    // 베이스 회전축 STEP (PUL+)
 #define MOTOR1_BASE_DIR       5    // 베이스 회전축 DIR  (DIR+)
 #define MOTOR1_BASE_ENA       8    // 베이스 ENA  (LOW=활성, HIGH=비활성)
-#define MOTOR2_SHOULDER_STEP  6    // 숄더(하부 암) STEP
-#define MOTOR2_SHOULDER_DIR   7    // 숄더(하부 암) DIR
-#define MOTOR2_SHOULDER_ENA   9    // 숄더 ENA
-#define MOTOR3_ELBOW_STEP     15   // 엘보(상부 암) STEP
-#define MOTOR3_ELBOW_DIR      16   // 엘보(상부 암) DIR
-#define MOTOR3_ELBOW_ENA      10   // 엘보 ENA
+#define MOTOR2_SHOULDER_STEP  15   // 숄더(하부 암, 몸체쪽) STEP — GPIO 15/16 모터
+#define MOTOR2_SHOULDER_DIR   16   // 숄더(하부 암, 몸체쪽) DIR
+#define MOTOR2_SHOULDER_ENA   10   // 숄더 ENA
+#define MOTOR3_ELBOW_STEP     6    // 엘보(상부 암, 끝단쪽) STEP — GPIO 6/7 모터
+#define MOTOR3_ELBOW_DIR      7    // 엘보(상부 암, 끝단쪽) DIR
+#define MOTOR3_ELBOW_ENA      9    // 엘보 ENA
 
 #define LIMIT_BASE            1    // 베이스 영점 스위치
-#define LIMIT_SHOULDER        2    // 숄더 영점 스위치
-#define LIMIT_ELBOW           47   // 엘보 영점 스위치
+#define LIMIT_SHOULDER        47   // 숄더 영점 스위치 (물리적 스위치 교환 반영)
+#define LIMIT_ELBOW           2    // 엘보 영점 스위치 (물리적 스위치 교환 반영)
 
-// 스위치 논리 (NC=평상시 LOW, 눌림 HIGH / NO=평상시 HIGH, 눌림 LOW)
+// 스위치 논리 — 핀 교환 후 실제 연결된 스위치 타입 반영
 #define LIMIT_BASE_ACTIVE     HIGH // NC
-#define LIMIT_SHOULDER_ACTIVE HIGH // NC
-#define LIMIT_ELBOW_ACTIVE    LOW  // NO
+#define LIMIT_SHOULDER_ACTIVE LOW  // NO (47번 핀에 연결된 스위치)
+#define LIMIT_ELBOW_ACTIVE    HIGH // NC (2번 핀에 연결된 스위치)
 
 #define RELAY_VACUUM_PUMP     21   // 진공 펌프 릴레이 제어 핀
 // 릴레이 작동 로직 (Low-Level Trigger: LOW=켜짐, HIGH=오픈드레인 꺼짐)
@@ -91,13 +91,18 @@
 
 // 호밍 방향 (LOW/HIGH = DIR 핀 레벨, 스위치 쪽으로 가는 방향)
 #define HOMING_DIR_BASE       LOW
-#define HOMING_DIR_SHOULDER   LOW
-#define HOMING_DIR_ELBOW      HIGH
+#define HOMING_DIR_SHOULDER   HIGH  // GPIO 15/16 모터의 스위치 접근 방향
+#define HOMING_DIR_ELBOW      LOW   // GPIO 6/7 모터의 스위치 접근 방향
 
-// 호밍 후 초기 위치(0도)까지의 물리적 오프셋 스텝 (레퍼런스 v0.81 config.h 기준)
-#define HOME_OFFSET_BASE      3640 // Z_HOME_STEPS
-#define HOME_OFFSET_SHOULDER  1020 // X_HOME_STEPS (Upper Arm)
-#define HOME_OFFSET_ELBOW     1900 // Y_HOME_STEPS (Lower Arm)
+// 호밍 후 초기 자세까지 물리적으로 되돌아갈 스텝 수 (원작 v0.81 config.h)
+#define HOME_OFFSET_BASE      3640  // Z_HOME_STEPS (베이스 회전)
+#define HOME_OFFSET_SHOULDER  1900  // Y_HOME_STEPS (Lower Arm = 숄더, 몸체쪽)
+#define HOME_OFFSET_ELBOW     1020  // X_HOME_STEPS (Upper Arm = 엘보우, 끝단쪽)
+
+// 호밍 후 초기 자세에서의 각도 (원작: Lower=0°, Upper=90°, Rotate=0°)
+#define HOME_INITIAL_DEG_BASE      0.0f
+#define HOME_INITIAL_DEG_SHOULDER  0.0f   // 숄더 수평 = 0도
+#define HOME_INITIAL_DEG_ELBOW     90.0f  // 엘보우 직각 = 90도
 
 #define MIN_STEP_INTERVAL_US  100
 #define MAX_STEP_INTERVAL_US  5000
@@ -710,10 +715,11 @@ void executeMotionZVD(int32_t tb, int32_t ts, int32_t te, uint32_t base_ival) {
 }
 
 bool homeSingleAxis(int pinStep, int pinDir, int pinLim, int activeLevel, int homingDir,
-                    int homeOffset, volatile int32_t& ctr, const char* name) {
+                    int homeOffset, float initialDeg, float stepsPerDeg,
+                    volatile int32_t& ctr, const char* name) {
   if (hardware_bypassed) {
-    ctr = 0; delay(100);
-    Serial.printf("[HOME] %s bypassed\n", name);
+    ctr = (int32_t)(initialDeg * stepsPerDeg); delay(100);
+    Serial.printf("[HOME] %s bypassed (ctr=%d)\n", name, (int)ctr);
     return true;
   }
   if (pinStep == MOTOR1_BASE_STEP) { digitalWrite(MOTOR1_BASE_ENA, HIGH); delayMicroseconds(50); }
@@ -772,25 +778,38 @@ bool homeSingleAxis(int pinStep, int pinDir, int pinLim, int activeLevel, int ho
     if (i > 0 && i % 20 == 0) { vTaskDelay(pdMS_TO_TICKS(1)); }
   }
 
-  // 4단계: 영점 설정 (물리적 후퇴 없이 현재 위치를 오프셋 위치로 수학적 선언만 함)
-  if (homingDir == LOW) {
-    ctr = homeOffset;
-  } else {
-    ctr = -homeOffset;
+  // 4단계: 스위치에서 homeOffset 스텝만큼 물리적으로 되돌아가서 초기 자세에 도달
+  //        (원작 endstop.cpp homeOffset() 함수와 동일한 동작)
+  delay(HOME_DWELL_MS);
+  Serial.printf("[HOME] %s moving to initial pose (%d steps)...\n", name, homeOffset);
+  digitalWrite(pinDir, backDir); delayMicroseconds(5);
+  for (int i = 0; i < homeOffset; i++) {
+    stepPulse(pinStep); delayMicroseconds(HOMING_SPEED_US);
+    if (i > 0 && i % 50 == 0) { vTaskDelay(pdMS_TO_TICKS(1)); }
   }
+
+  // 5단계: 초기 자세 각도를 스텝 카운터에 설정
+  ctr = (int32_t)(initialDeg * stepsPerDeg);
   delay(HOME_DWELL_MS);
   if (pinStep == MOTOR1_BASE_STEP) digitalWrite(MOTOR1_BASE_ENA, HIGH);
-  Serial.printf("[HOME] %s OK (offset=%d)\n", name, homeOffset);
+  Serial.printf("[HOME] %s OK (initial=%.1f deg, ctr=%d)\n", name, initialDeg, (int)ctr);
   return true;
 }
 
 bool homeAllAxes() {
+  // 호밍 순서: 숄더(몸체쪽) → 엘보우(끝단쪽) → 베이스 (원작 homeSequence와 동일)
   bool ok = homeSingleAxis(MOTOR2_SHOULDER_STEP, MOTOR2_SHOULDER_DIR, LIMIT_SHOULDER,
-              LIMIT_SHOULDER_ACTIVE, HOMING_DIR_SHOULDER, HOME_OFFSET_SHOULDER, currentSteps_shoulder, "Shoulder") &&
+              LIMIT_SHOULDER_ACTIVE, HOMING_DIR_SHOULDER, HOME_OFFSET_SHOULDER,
+              HOME_INITIAL_DEG_SHOULDER, STEPS_PER_DEG_SHOULDER,
+              currentSteps_shoulder, "Shoulder") &&
             homeSingleAxis(MOTOR3_ELBOW_STEP, MOTOR3_ELBOW_DIR, LIMIT_ELBOW,
-              LIMIT_ELBOW_ACTIVE, HOMING_DIR_ELBOW, HOME_OFFSET_ELBOW, currentSteps_elbow, "Elbow") &&
+              LIMIT_ELBOW_ACTIVE, HOMING_DIR_ELBOW, HOME_OFFSET_ELBOW,
+              HOME_INITIAL_DEG_ELBOW, STEPS_PER_DEG_ELBOW,
+              currentSteps_elbow, "Elbow") &&
             homeSingleAxis(MOTOR1_BASE_STEP, MOTOR1_BASE_DIR, LIMIT_BASE,
-              LIMIT_BASE_ACTIVE, HOMING_DIR_BASE, HOME_OFFSET_BASE, currentSteps_base, "Base");
+              LIMIT_BASE_ACTIVE, HOMING_DIR_BASE, HOME_OFFSET_BASE,
+              HOME_INITIAL_DEG_BASE, STEPS_PER_DEG_BASE,
+              currentSteps_base, "Base");
   return ok;
 }
 
