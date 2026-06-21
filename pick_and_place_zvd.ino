@@ -396,17 +396,17 @@ const char index_html[] PROGMEM = R"rawliteral(
       <div style="margin-bottom:15px;">
         <h3 style="color:var(--primary); margin:0 0 8px; font-size:1rem;">Point A (피킹)</h3>
         <div id="ptAU" class="data-row"><span>A 위 (대기)</span><span class="data-val" style="color:#f43f5e;">❌</span></div>
-        <button class="btn btn-secondary" style="padding:6px;width:100%;margin-bottom:4px;" onclick="sendCommand('saveAU')">📌 A위 저장 (대기높이)</button>
+        <div style="display:flex;gap:4px;margin-bottom:4px;"><button class="btn btn-secondary" style="padding:6px;flex:1;" onclick="sendCommand('saveAU')">📌 저장</button><button class="btn btn-secondary" style="padding:6px;flex:1;background:#6366f1;" onclick="sendCommand('goAU')">➡ 이동</button></div>
         <div id="ptAD" class="data-row"><span>A 아래 (집기)</span><span class="data-val" style="color:#f43f5e;">❌</span></div>
-        <button class="btn btn-secondary" style="padding:6px;width:100%;" onclick="sendCommand('saveAD')">📌 A아래 저장 (칩높이)</button>
+        <div style="display:flex;gap:4px;"><button class="btn btn-secondary" style="padding:6px;flex:1;" onclick="sendCommand('saveAD')">📌 저장</button><button class="btn btn-secondary" style="padding:6px;flex:1;background:#6366f1;" onclick="sendCommand('goAD')">➡ 이동</button></div>
       </div>
       
       <div style="margin-bottom:15px;">
         <h3 style="color:var(--accent); margin:0 0 8px; font-size:1rem;">Point B (배치)</h3>
         <div id="ptBU" class="data-row"><span>B 위 (대기)</span><span class="data-val" style="color:#f43f5e;">❌</span></div>
-        <button class="btn btn-secondary" style="padding:6px;width:100%;margin-bottom:4px;" onclick="sendCommand('saveBU')">📌 B위 저장 (대기높이)</button>
+        <div style="display:flex;gap:4px;margin-bottom:4px;"><button class="btn btn-secondary" style="padding:6px;flex:1;" onclick="sendCommand('saveBU')">📌 저장</button><button class="btn btn-secondary" style="padding:6px;flex:1;background:#6366f1;" onclick="sendCommand('goBU')">➡ 이동</button></div>
         <div id="ptBD" class="data-row"><span>B 아래 (놓기)</span><span class="data-val" style="color:#f43f5e;">❌</span></div>
-        <button class="btn btn-secondary" style="padding:6px;width:100%;" onclick="sendCommand('saveBD')">📌 B아래 저장 (놓는높이)</button>
+        <div style="display:flex;gap:4px;"><button class="btn btn-secondary" style="padding:6px;flex:1;" onclick="sendCommand('saveBD')">📌 저장</button><button class="btn btn-secondary" style="padding:6px;flex:1;background:#6366f1;" onclick="sendCommand('goBD')">➡ 이동</button></div>
       </div>
       
       <div id="cycleInfo" class="data-row" style="margin-bottom:10px;"><span>사이클 횟수</span><span class="data-val">0</span></div>
@@ -420,28 +420,6 @@ const char index_html[] PROGMEM = R"rawliteral(
     </div>
   </div>
 
-  <!-- 핀 배치도 -->
-  <div class="glass-card" style="max-width:1000px; margin:20px auto;">
-    <h2>📌 핀 배치도 (ESP32-S3)</h2>
-    <table class="pin-table">
-      <tr><th>기능</th><th>GPIO</th><th>연결 대상</th><th>비고</th></tr>
-      <tr class="cat-m"><td>Base STEP</td><td>4</td><td>TB6600 #1 PUL+</td><td rowspan="3">베이스 축</td></tr>
-      <tr class="cat-m"><td>Base DIR</td><td>5</td><td>TB6600 #1 DIR+</td></tr>
-      <tr class="cat-m"><td>Base ENA</td><td>8</td><td>TB6600 #1 ENA+</td></tr>
-      <tr class=\"cat-m\"><td>Shoulder STEP</td><td>15</td><td>TB6600 #2 PUL+</td><td rowspan=\"3\">숄더 축 (몸체쪽)</td></tr>
-      <tr class=\"cat-m\"><td>Shoulder DIR</td><td>16</td><td>TB6600 #2 DIR+</td></tr>
-      <tr class=\"cat-m\"><td>Shoulder ENA</td><td>10</td><td>TB6600 #2 ENA+</td></tr>
-      <tr class=\"cat-m\"><td>Elbow STEP</td><td>6</td><td>TB6600 #3 PUL+</td><td rowspan=\"3\">엘보 축 (끝단쪽)</td></tr>
-      <tr class=\"cat-m\"><td>Elbow DIR</td><td>7</td><td>TB6600 #3 DIR+</td></tr>
-      <tr class=\"cat-m\"><td>Elbow ENA</td><td>9</td><td>TB6600 #3 ENA+</td></tr>
-      <tr class=\"cat-s\"><td>Base Limit</td><td>1</td><td>리밋 스위치</td><td>NC (HIGH=눌림)</td></tr>
-      <tr class=\"cat-s\"><td>Shoulder Limit</td><td>47</td><td>리밋 스위치</td><td>NO (LOW=눌림)</td></tr>
-      <tr class=\"cat-s\"><td>Elbow Limit</td><td>2</td><td>리밋 스위치</td><td>NC (HIGH=눌림)</td></tr>
-      <tr class="cat-r"><td>Vacuum Pump</td><td>21</td><td>릴레이 #1 IN</td><td>LOW=가동 (Open-Drain)</td></tr>
-      <tr class="cat-i"><td>MPU6050 SDA</td><td>17</td><td>MPU6050</td><td rowspan="2">I2C 3.3V</td></tr>
-      <tr class="cat-i"><td>MPU6050 SCL</td><td>18</td><td>MPU6050</td></tr>
-    </table>
-  </div>
 
   <!-- 하드웨어 테스트 패널 -->
   <div class="glass-card" style="max-width:1000px; margin:20px auto;">
@@ -1234,6 +1212,20 @@ void setupWiFiAndWeb() {
       else if(cmd == "saveBD") webCmd_SaveBD = true;
       else if(cmd == "rehome") webCmd_Rehome = true;
       else if(cmd == "tune") webCmd_TuneZVD = true;
+      else if(cmd.startsWith("go")) {
+        // 저장된 위치로 이동
+        if (currentState != STATE_IDLE) { server.send(409, "text/plain", "BUSY"); return; }
+        TeachPoint* pt = nullptr;
+        if(cmd == "goAU" && pointA_up.saved) pt = &pointA_up;
+        else if(cmd == "goAD" && pointA_down.saved) pt = &pointA_down;
+        else if(cmd == "goBU" && pointB_up.saved) pt = &pointB_up;
+        else if(cmd == "goBD" && pointB_down.saved) pt = &pointB_down;
+        if (pt) {
+          MotionCommand mc = {pt->steps_base, pt->steps_shoulder, pt->steps_elbow, 800, false, false};
+          xQueueSend(motionQueue, &mc, pdMS_TO_TICKS(500));
+          Serial.printf("[GOTO] %s -> steps(%d,%d,%d)\n", cmd.c_str(), (int)pt->steps_base, (int)pt->steps_shoulder, (int)pt->steps_elbow);
+        } else { server.send(400, "text/plain", "NOT_SAVED"); return; }
+      }
       else if(cmd == "timing") {
         if (server.hasArg("grip")) gripDelayMs = constrain(server.arg("grip").toInt(), 200, 5000);
         if (server.hasArg("rel")) releaseDelayMs = constrain(server.arg("rel").toInt(), 100, 5000);
