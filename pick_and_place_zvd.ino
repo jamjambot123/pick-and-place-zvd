@@ -660,9 +660,12 @@ void estimateVibrationParams() {
   }
   float pv[20]; int pt[20]; int pc = 0;
   float avg = 0; for (int j = 0; j < SC; j++) avg += samples[j]; avg /= SC;
+  float max_ac = 0; for (int j = 0; j < SC; j++) { float ac = abs(samples[j] - avg); if (ac > max_ac) max_ac = ac; }
+  float threshold = avg + max(max_ac * 0.3f, 0.02f); // DC 평균 기준, 최대 진폭의 30% 이상 또는 최소 0.02G 이상 흔들림만 피크로 인정
+
   for (int i = 1; i < SC - 1 && pc < 20; i++) {
     if (samples[i] > samples[i - 1] && samples[i] > samples[i + 1]) {
-      if (samples[i] > avg * 1.2f) { pv[pc] = samples[i]; pt[pc] = i; pc++; }
+      if (samples[i] > threshold) { pv[pc] = samples[i]; pt[pc] = i; pc++; }
     }
   }
   if (pc >= 3) {
@@ -808,7 +811,7 @@ void executeMotion(int32_t tb, int32_t ts, int32_t te, uint32_t base_ival, uint8
   // Common Anode로 인해 DIR 논리가 반전됨 (<= 0 이면 정방향).
   // GPIO 6/7 모터(엘보우)만 추가 반전 필요 (> 0).
   digitalWrite(MOTOR1_BASE_DIR, dirb <= 0); digitalWrite(MOTOR2_SHOULDER_DIR, dirs <= 0); digitalWrite(MOTOR3_ELBOW_DIR, dire > 0);
-  delayMicroseconds(5);
+  delayMicroseconds(50);
   int32_t ab = abs(db), as = abs(ds), ae = abs(de);
   int32_t ms = max(ab, max(as, ae));
   if (ms == 0) { motionComplete = true; return; }
@@ -868,7 +871,7 @@ bool homeSingleAxis(int pinStep, int pinDir, int pinLim, int activeLevel, int ho
   // 1단계: 이미 스위치 위에 있으면 빠져나가기 (Backoff)
   if (digitalRead(pinLim) == activeLevel) {
     Serial.printf("[HOME] %s on switch, backing off...\n", name);
-    digitalWrite(pinDir, backDir); delayMicroseconds(5);
+    digitalWrite(pinDir, backDir); delayMicroseconds(50);
     for (int i = 0; i < HOMING_BACKOFF_STEPS * 3; i++) {
       if (digitalRead(pinLim) != activeLevel) break;
       stepPulse(pinStep); delayMicroseconds(HOMING_SPEED_US);
@@ -884,7 +887,7 @@ bool homeSingleAxis(int pinStep, int pinDir, int pinLim, int activeLevel, int ho
 
   // 2단계: 스위치 방향으로 접근 (Approach)
   Serial.printf("[HOME] %s approaching switch...\n", name);
-  digitalWrite(pinDir, homingDir); delayMicroseconds(5);
+  digitalWrite(pinDir, homingDir); delayMicroseconds(50);
   bool found = false;
   for (int32_t i = 0; i < maxS; i++) {
     if (webCmd_EStop) { 
@@ -904,13 +907,13 @@ bool homeSingleAxis(int pinStep, int pinDir, int pinLim, int activeLevel, int ho
 
   // 3단계: 살짝 빠져나가서 정밀 재접근
   delay(HOME_DWELL_MS);
-  digitalWrite(pinDir, backDir); delayMicroseconds(5);
+  digitalWrite(pinDir, backDir); delayMicroseconds(50);
   for (int i = 0; i < HOMING_BACKOFF_STEPS; i++) {
     stepPulse(pinStep); delayMicroseconds(HOMING_SPEED_US * 2);
     if (i > 0 && i % 20 == 0) { vTaskDelay(pdMS_TO_TICKS(1)); }
   }
   delay(HOME_DWELL_MS);
-  digitalWrite(pinDir, homingDir); delayMicroseconds(5);
+  digitalWrite(pinDir, homingDir); delayMicroseconds(50);
   for (int32_t i = 0; i < HOMING_BACKOFF_STEPS * 3; i++) {
     if (digitalRead(pinLim) == activeLevel) break;
     stepPulse(pinStep); delayMicroseconds(HOMING_APPROACH_SPEED_US);
@@ -921,7 +924,7 @@ bool homeSingleAxis(int pinStep, int pinDir, int pinLim, int activeLevel, int ho
   //        (원작 endstop.cpp homeOffset() 함수와 동일한 동작)
   delay(HOME_DWELL_MS);
   Serial.printf("[HOME] %s moving to initial pose (%d steps)...\n", name, homeOffset);
-  digitalWrite(pinDir, backDir); delayMicroseconds(5);
+  digitalWrite(pinDir, backDir); delayMicroseconds(50);
   for (int i = 0; i < homeOffset; i++) {
     stepPulse(pinStep); delayMicroseconds(HOMING_SPEED_US);
     if (i > 0 && i % 50 == 0) { vTaskDelay(pdMS_TO_TICKS(1)); }
@@ -1453,7 +1456,7 @@ void setupWiFiAndWeb() {
         } else {
           digitalWrite(pinDir, state > 0 ? LOW : HIGH);
         }
-        delayMicroseconds(5);
+        delayMicroseconds(50);
         for(int i = 0; i < steps; i++) {
           stepPulse(pinStep);
           delayMicroseconds(HOMING_SPEED_US);
