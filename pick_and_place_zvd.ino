@@ -164,6 +164,9 @@ volatile int32_t currentSteps_base = 0;
 volatile int32_t currentSteps_shoulder = 0;
 volatile int32_t currentSteps_elbow = 0;
 volatile bool motionComplete = true;
+volatile bool webCmd_EStop = false;  // 비상정지 플래그
+
+portMUX_TYPE stepsMux = portMUX_INITIALIZER_UNLOCKED;  // FK 읽기용 스핀락
 
 // 웹 제어 트리거
 volatile bool webCmd_StartCycle = false;
@@ -316,6 +319,7 @@ const char index_html[] PROGMEM = R"rawliteral(
           <button class="btn btn-secondary" onclick="sendCommand('rehome')">⌂ 강제 호밍</button>
           <button class="btn btn-secondary" onclick="sendCommand('tune')">∿ ZVD 튜닝</button>
         </div>
+        <button class="btn" style="background:#f43f5e;width:100%;margin-top:8px;font-size:1.1rem;" onclick="sendCommand('estop')">⛔ 비상정지 (E-STOP)</button>
       </div>
     </div>
     
@@ -570,9 +574,15 @@ JointAngles solveIK(float x, float y, float z) {
 
 // 순운동학: 현재 스텝 → XYZ (관절 조그 후에도 정확한 좌표)
 CartesianPoint solveFK() {
-  float base_rad = (currentSteps_base / STEPS_PER_DEG_BASE) * PI / 180.0f;
-  float sh_rad   = (currentSteps_shoulder / STEPS_PER_DEG_SHOULDER) * PI / 180.0f;
-  float el_rad   = (currentSteps_elbow / STEPS_PER_DEG_ELBOW) * PI / 180.0f;
+  int32_t sb, ss, se;
+  portENTER_CRITICAL(&stepsMux);
+  sb = currentSteps_base;
+  ss = currentSteps_shoulder;
+  se = currentSteps_elbow;
+  portEXIT_CRITICAL(&stepsMux);
+  float base_rad = (sb / STEPS_PER_DEG_BASE) * PI / 180.0f;
+  float sh_rad   = (ss / STEPS_PER_DEG_SHOULDER) * PI / 180.0f;
+  float el_rad   = (se / STEPS_PER_DEG_ELBOW) * PI / 180.0f;
   float r = LOW_SHANK_LENGTH * cosf(sh_rad)
           + HIGH_SHANK_LENGTH * cosf(sh_rad + el_rad)
           + END_EFFECTOR_OFFSET;
@@ -682,11 +692,12 @@ bool homeSingleAxis(int pinStep, int pinDir, int pinLim, int activeLevel, int ho
     delay(HOME_DWELL_MS);
   }
 
-  // 2단계: 스위치 방향으로 느리게 접근 (Approach)
+  // 2단계: 스위치 방향으로 접근 (Approach)
   Serial.printf("[HOME] %s approaching switch...\n", name);
   digitalWrite(pinDir, homingDir); delayMicroseconds(5);
   bool found = false;
   for (int32_t i = 0; i < maxS; i++) {
+    if (webCmd_EStop) { Serial.println("[HOME] E-STOP!"); return false; }
     if (digitalRead(pinLim) == activeLevel) { found = true; break; }
     stepPulse(pinStep); delayMicroseconds(HOMING_SPEED_US);
   }
@@ -782,6 +793,12 @@ void taskStepper(void* pv) {
 void taskControl(void* pv) {
   while (true) {
     // 우선적인 웹 명령 처리
+    if (webCmd_EStop) {
+      webCmd_EStop = false;
+      digitalWrite(RELAY_VACUUM_PUMP, LOW);
+      currentState = STATE_IDLE;
+      Serial.println("[STATE] E-STOP -> IDLE");
+    }
     if (webCmd_Rehome) { webCmd_Rehome = false; currentState = STATE_HOMING; }
     if (webCmd_TuneZVD) { webCmd_TuneZVD = false; estimateVibrationParams(); }
 
@@ -815,26 +832,26 @@ void taskControl(void* pv) {
         break;
 
       case STATE_APPROACH:
-        if (!moveToXYZ(POINT_A_X, POINT_A_Y, POINT_A_Z_ABOVE, true, 300) ||
-            !moveToXYZ(POINT_A_X, POINT_A_Y, POINT_A_Z, false, 500)) { currentState = STATE_RETURN; break; }
+        if (!moveLinearXYZ(POINT_A_X, POINT_A_Y, POINT_A_Z_ABOVE, 300) ||
+            !moveLinearXYZ(POINT_A_X, POINT_A_Y, POINT_A_Z, 500)) { currentState = STATE_RETURN; break; }
         currentState = STATE_PICK;
         break;
 
       case STATE_PICK:
         vacuumGrip(500);
-        if (!moveToXYZ(POINT_A_X, POINT_A_Y, POINT_A_Z_ABOVE, false, 400)) { vacuumRelease(200); currentState = STATE_RETURN; break; }
+        if (!moveLinearXYZ(POINT_A_X, POINT_A_Y, POINT_A_Z_ABOVE, 400)) { vacuumRelease(200); currentState = STATE_RETURN; break; }
         currentState = STATE_TRANSFER;
         break;
 
       case STATE_TRANSFER:
         if (!moveToXYZ(POINT_B_X, POINT_B_Y, POINT_B_Z_ABOVE, true, 200) ||
-            !moveToXYZ(POINT_B_X, POINT_B_Y, POINT_B_Z, false, 500)) { vacuumRelease(200); currentState = STATE_RETURN; break; }
+            !moveLinearXYZ(POINT_B_X, POINT_B_Y, POINT_B_Z, 500)) { vacuumRelease(200); currentState = STATE_RETURN; break; }
         currentState = STATE_PLACE_RELEASE;
         break;
 
       case STATE_PLACE_RELEASE:
         vacuumRelease(200);
-        moveToXYZ(POINT_B_X, POINT_B_Y, POINT_B_Z_ABOVE, false, 400);
+        moveLinearXYZ(POINT_B_X, POINT_B_Y, POINT_B_Z_ABOVE, 400);
         currentState = STATE_RETURN;
         break;
 
@@ -905,6 +922,11 @@ void setupWiFiAndWeb() {
       if(cmd == "start") webCmd_StartCycle = true;
       else if(cmd == "rehome") webCmd_Rehome = true;
       else if(cmd == "tune") webCmd_TuneZVD = true;
+      else if(cmd == "estop") {
+        webCmd_EStop = true;
+        digitalWrite(RELAY_VACUUM_PUMP, LOW);
+        Serial.println("[CMD] E-STOP received!");
+      }
     }
     server.send(200, "text/plain", "OK");
   });
@@ -942,16 +964,22 @@ void setupWiFiAndWeb() {
         int steps = 50;
         if(server.hasArg("steps")) steps = constrain(server.arg("steps").toInt(), 1, 500);
         int pinStep, pinDir;
-        if(target == "jog_base")          { pinStep = MOTOR1_BASE_STEP; pinDir = MOTOR1_BASE_DIR; }
-        else if(target == "jog_shoulder") { pinStep = MOTOR2_SHOULDER_STEP; pinDir = MOTOR2_SHOULDER_DIR; }
-        else if(target == "jog_elbow")    { pinStep = MOTOR3_ELBOW_STEP; pinDir = MOTOR3_ELBOW_DIR; }
+        volatile int32_t* stepCounter = nullptr;
+        if(target == "jog_base")          { pinStep = MOTOR1_BASE_STEP; pinDir = MOTOR1_BASE_DIR; stepCounter = &currentSteps_base; }
+        else if(target == "jog_shoulder") { pinStep = MOTOR2_SHOULDER_STEP; pinDir = MOTOR2_SHOULDER_DIR; stepCounter = &currentSteps_shoulder; }
+        else if(target == "jog_elbow")    { pinStep = MOTOR3_ELBOW_STEP; pinDir = MOTOR3_ELBOW_DIR; stepCounter = &currentSteps_elbow; }
         else { server.send(400, "text/plain", "BAD"); return; }
+        int dir = (state > 0) ? 1 : -1;
         digitalWrite(pinDir, state > 0 ? HIGH : LOW);
         delayMicroseconds(5);
         for(int i = 0; i < steps; i++) {
           stepPulse(pinStep);
           delayMicroseconds(HOMING_SPEED_US);
         }
+        // 스텝 카운터 업데이트 (FK 좌표 동기화)
+        portENTER_CRITICAL(&stepsMux);
+        *stepCounter += dir * steps;
+        portEXIT_CRITICAL(&stepsMux);
       }
     }
     server.send(200, "text/plain", "OK");
@@ -996,17 +1024,17 @@ void setup() {
   // 릴레이 초기값은 LOW (OFF)
   digitalWrite(RELAY_VACUUM_PUMP, LOW);
 
-  // 리밋 스위치 자동 감지: 3개 스위치 중 하나라도 INPUT_PULLUP과 다른 신호면 연결된 것
-  // (풀업 상태에서 NC 스위치가 연결되면 HIGH, NO 스위치가 연결되면 LOW를 보냄)
-  delay(50); // 핀 안정화
-  bool sw_detected = (digitalRead(LIMIT_BASE) != HIGH) ||
-                     (digitalRead(LIMIT_SHOULDER) != HIGH) ||
-                     (digitalRead(LIMIT_ELBOW) != HIGH);
-  if (sw_detected) {
+  // 리밋 스위치 자동 감지
+  // NC 스위치(Base, Elbow)가 연결되면 평상시 LOW를 보냄 (풀업 + NC = GND 연결)
+  // NO 스위치(Shoulder)는 연결되어도 평상시 HIGH라서 감지 불가 → NC로 판별
+  delay(50);
+  bool nc_base_detected  = (digitalRead(LIMIT_BASE) == LOW);   // NC: 미눌림=LOW
+  bool nc_elbow_detected = (digitalRead(LIMIT_ELBOW) == LOW);  // NC: 미눌림=LOW
+  if (nc_base_detected || nc_elbow_detected) {
     hardware_bypassed = false;
     Serial.println("[INIT] Limit switches detected -> real homing enabled");
   } else {
-    Serial.println("[INIT] No switches detected -> hardware bypassed");
+    Serial.println("[INIT] No switches detected -> hardware bypassed (toggle via web UI)");
   }
 
   // 3. 웹 서버 실행
