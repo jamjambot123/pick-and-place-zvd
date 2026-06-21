@@ -540,10 +540,10 @@ const char index_html[] PROGMEM = R"rawliteral(
           if(cycInfo) cycInfo.innerHTML = '<span>사이클 횟수</span><span class="data-val">'+data.cycles+' / '+data.cycles_target+'</span>';
           
           if(document.getElementById('vibScurve') && data.vib_s !== undefined) {
-             document.getElementById('vibScurve').innerText = data.vib_s.toFixed(3) + ' G';
+             document.getElementById('vibScurve').innerText = data.vib_s == 0.0 ? '측정 전' : data.vib_s.toFixed(3) + ' G';
           }
           if(document.getElementById('vibZvd') && data.vib_z !== undefined) {
-             document.getElementById('vibZvd').innerText = data.vib_z.toFixed(3) + ' G';
+             document.getElementById('vibZvd').innerText = data.vib_z == 0.0 ? '측정 전' : data.vib_z.toFixed(3) + ' G';
           }
 
           if(initInputs && data.spd_us) document.getElementById('spdUs').value = data.spd_us;
