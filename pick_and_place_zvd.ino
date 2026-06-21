@@ -636,7 +636,11 @@ ZVD_Impulse calculateZVD(float freq_hz, float zeta) {
   return zvd;
 }
 
-inline void stepPulse(int pin) { digitalWrite(pin, HIGH); delayMicroseconds(3); digitalWrite(pin, LOW); }
+inline void stepPulse(int pin) {
+  digitalWrite(pin, HIGH);
+  delayMicroseconds(10); // TB6600 인식률 향상을 위해 펄스 폭을 5us -> 10us로 증가
+  digitalWrite(pin, LOW);
+}
 
 uint32_t trapezoidalProfile(int32_t cs, int32_t ts, uint32_t baseIval) {
   if (ts <= 0) return baseIval;
@@ -718,9 +722,9 @@ bool homeSingleAxis(int pinStep, int pinDir, int pinLim, int activeLevel, int ho
     Serial.printf("[HOME] %s on switch, backing off...\n", name);
     digitalWrite(pinDir, backDir); delayMicroseconds(5);
     for (int i = 0; i < HOMING_BACKOFF_STEPS * 3; i++) {
-      server.handleClient(); // 와이파이 응답 처리
       if (digitalRead(pinLim) != activeLevel) break;
-      stepPulse(pinStep); vTaskDelay(pdMS_TO_TICKS(1)); // 1ms 휴식으로 Watchdog 방지
+      stepPulse(pinStep); delayMicroseconds(HOMING_SPEED_US);
+      if (i > 0 && i % 50 == 0) { server.handleClient(); vTaskDelay(pdMS_TO_TICKS(1)); }
     }
     if (digitalRead(pinLim) == activeLevel) {
       Serial.printf("[HOME] %s backoff FAIL\n", name); 
@@ -735,14 +739,14 @@ bool homeSingleAxis(int pinStep, int pinDir, int pinLim, int activeLevel, int ho
   digitalWrite(pinDir, homingDir); delayMicroseconds(5);
   bool found = false;
   for (int32_t i = 0; i < maxS; i++) {
-    server.handleClient();
     if (webCmd_EStop) { 
       Serial.println("[HOME] E-STOP!"); 
       if (pinStep == MOTOR1_BASE_STEP) digitalWrite(MOTOR1_BASE_ENA, HIGH);
       return false; 
     }
     if (digitalRead(pinLim) == activeLevel) { found = true; break; }
-    stepPulse(pinStep); vTaskDelay(pdMS_TO_TICKS(1));
+    stepPulse(pinStep); delayMicroseconds(HOMING_SPEED_US);
+    if (i > 0 && i % 50 == 0) { server.handleClient(); vTaskDelay(pdMS_TO_TICKS(1)); }
   }
   if (!found) { 
     Serial.printf("[HOME] %s approach FAIL\n", name); 
@@ -754,15 +758,15 @@ bool homeSingleAxis(int pinStep, int pinDir, int pinLim, int activeLevel, int ho
   delay(HOME_DWELL_MS);
   digitalWrite(pinDir, backDir); delayMicroseconds(5);
   for (int i = 0; i < HOMING_BACKOFF_STEPS; i++) {
-    server.handleClient();
-    stepPulse(pinStep); vTaskDelay(pdMS_TO_TICKS(2));
+    stepPulse(pinStep); delayMicroseconds(HOMING_SPEED_US * 2);
+    if (i > 0 && i % 20 == 0) { server.handleClient(); vTaskDelay(pdMS_TO_TICKS(1)); }
   }
   delay(HOME_DWELL_MS);
   digitalWrite(pinDir, homingDir); delayMicroseconds(5);
   for (int32_t i = 0; i < HOMING_BACKOFF_STEPS * 3; i++) {
-    server.handleClient();
     if (digitalRead(pinLim) == activeLevel) break;
-    stepPulse(pinStep); vTaskDelay(pdMS_TO_TICKS(2)); // 정밀 접근 시 2ms 딜레이
+    stepPulse(pinStep); delayMicroseconds(HOMING_APPROACH_SPEED_US);
+    if (i > 0 && i % 20 == 0) { server.handleClient(); vTaskDelay(pdMS_TO_TICKS(1)); }
   }
 
   // 4단계: 영점 설정 후 초기위치까지 오프셋 이동
@@ -771,8 +775,8 @@ bool homeSingleAxis(int pinStep, int pinDir, int pinLim, int activeLevel, int ho
     delay(HOME_DWELL_MS);
     digitalWrite(pinDir, backDir); delayMicroseconds(5);
     for (int i = 0; i < homeOffset; i++) {
-      server.handleClient();
-      stepPulse(pinStep); vTaskDelay(pdMS_TO_TICKS(1));
+      stepPulse(pinStep); delayMicroseconds(HOMING_SPEED_US);
+      if (i > 0 && i % 50 == 0) { server.handleClient(); vTaskDelay(pdMS_TO_TICKS(1)); }
     }
     ctr = homeOffset;
   }
@@ -1035,9 +1039,9 @@ void setupWiFiAndWeb() {
         digitalWrite(pinDir, state > 0 ? HIGH : LOW);
         delayMicroseconds(5);
         for(int i = 0; i < steps; i++) {
-          server.handleClient();
           stepPulse(pinStep);
-          vTaskDelay(pdMS_TO_TICKS(1));
+          delayMicroseconds(HOMING_SPEED_US);
+          if (i > 0 && i % 50 == 0) { server.handleClient(); vTaskDelay(pdMS_TO_TICKS(1)); }
         }
         
         if (target == "jog_base") digitalWrite(MOTOR1_BASE_ENA, HIGH);
