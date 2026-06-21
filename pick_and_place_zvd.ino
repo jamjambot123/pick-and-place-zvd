@@ -1078,12 +1078,19 @@ void taskControl(void* pv) {
         break;
       }
 
-      // ── B위로 이동 ──
+      // ── B위로 이동 (높이 맞춤 → 수평 이동) ──
       case STATE_MOVE_TO_B: {
         Serial.printf("[CYCLE] → B위 (steps: %d,%d,%d)\n",
           (int)pointB_up.steps_base, (int)pointB_up.steps_shoulder, (int)pointB_up.steps_elbow);
-        MotionCommand cmd = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, motionSpeedUs, activeProfile, false};
-        if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        // 1) 현재 베이스에서 B위 높이로 먼저 조절 (수평이동 중 높이 변화 방지)
+        MotionCommand cmd1 = {currentSteps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, vertSpeedUs, activeProfile, false};
+        if (xQueueSend(motionQueue, &cmd1, pdMS_TO_TICKS(1000)) == pdTRUE) {
+          xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+        }
+        delay(100);
+        // 2) 높이 유지한 채 베이스 회전
+        MotionCommand cmd2 = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, motionSpeedUs, activeProfile, false};
+        if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
         delay(200);
@@ -1151,11 +1158,18 @@ void taskControl(void* pv) {
         break;
       }
 
-      // ── A위로 복귀 ──
+      // ── A위로 복귀 (높이 맞춤 → 수평 이동) ──
       case STATE_RETURN_A: {
         Serial.println("[CYCLE] →A위(복귀)");
-        MotionCommand cmd = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, motionSpeedUs, activeProfile, false};
-        if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        // 1) 현재 베이스에서 A위 높이로 먼저 조절
+        MotionCommand cmd1 = {currentSteps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, activeProfile, false};
+        if (xQueueSend(motionQueue, &cmd1, pdMS_TO_TICKS(1000)) == pdTRUE) {
+          xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+        }
+        delay(100);
+        // 2) 높이 유지한 채 베이스 회전
+        MotionCommand cmd2 = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, motionSpeedUs, activeProfile, false};
+        if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
         delay(200);
