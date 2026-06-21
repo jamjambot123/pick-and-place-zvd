@@ -967,6 +967,25 @@ void taskStepper(void* pv) {
 // ██  섹션 8: Core 0 메인 제어 태스크 (상태 머신 + 웹 GUI 트리거 처리)
 // ═══════════════════════════════════════════════════════════════════════════
 
+// 백래시(기계적 유격) 제거용 오버슈팅 수평 이동 함수 (홈 스위치와 유사한 원리)
+// 항상 Base 모터가 같은 방향(+)으로 기어를 물고 최종 정지하도록 만듦
+void executeBaseMoveWithOvershoot(int32_t targetBase, int32_t targetShoulder, int32_t targetElbow, uint32_t speedUs) {
+  int32_t curB;
+  portENTER_CRITICAL(&stepsMux);
+  curB = currentSteps_base;
+  portEXIT_CRITICAL(&stepsMux);
+
+  // 현재 위치보다 목표가 작다면(역방향 이동), 목표를 150스텝 더 지나간 뒤에 정방향으로 되돌아옴
+  if (targetBase <= curB) {
+    MotionCommand cmd1 = {targetBase - 150, targetShoulder, targetElbow, speedUs, activeProfile, false};
+    if (xQueueSend(motionQueue, &cmd1, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+    delay(50);
+  }
+  // 최종 접근 (항상 +방향으로 기어가 팽팽하게 물림)
+  MotionCommand cmd2 = {targetBase, targetShoulder, targetElbow, speedUs, activeProfile, false};
+  if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+}
+
 void taskControl(void* pv) {
   while (true) {
     // 우선적인 웹 명령 처리
@@ -1055,12 +1074,10 @@ void taskControl(void* pv) {
           MotionCommand cmd1 = {currentSteps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, activeProfile, false};
           if (xQueueSend(motionQueue, &cmd1, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
           delay(100);
-          MotionCommand cmd2 = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, motionSpeedUs, activeProfile, false};
-          if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+          executeBaseMoveWithOvershoot(pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, motionSpeedUs);
         } else {
           // 현재가 더 높음: 높은 층에서 수평 회전 후 목적지로 하강
-          MotionCommand cmd1 = {pointA_up.steps_base, currentSteps_shoulder, currentSteps_elbow, motionSpeedUs, activeProfile, false};
-          if (xQueueSend(motionQueue, &cmd1, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+          executeBaseMoveWithOvershoot(pointA_up.steps_base, currentSteps_shoulder, currentSteps_elbow, motionSpeedUs);
           delay(100);
           MotionCommand cmd2 = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, activeProfile, false};
           if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
@@ -1111,12 +1128,10 @@ void taskControl(void* pv) {
           MotionCommand cmd1 = {currentSteps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, vertSpeedUs, activeProfile, false};
           if (xQueueSend(motionQueue, &cmd1, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
           delay(100);
-          MotionCommand cmd2 = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, motionSpeedUs, activeProfile, false};
-          if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+          executeBaseMoveWithOvershoot(pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, motionSpeedUs);
         } else {
           // 현재가 더 높음: 높은 층에서 수평 회전 후 목적지로 하강
-          MotionCommand cmd1 = {pointB_up.steps_base, currentSteps_shoulder, currentSteps_elbow, motionSpeedUs, activeProfile, false};
-          if (xQueueSend(motionQueue, &cmd1, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+          executeBaseMoveWithOvershoot(pointB_up.steps_base, currentSteps_shoulder, currentSteps_elbow, motionSpeedUs);
           delay(100);
           MotionCommand cmd2 = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, vertSpeedUs, activeProfile, false};
           if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
@@ -1196,12 +1211,10 @@ void taskControl(void* pv) {
           MotionCommand cmd1 = {currentSteps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, activeProfile, false};
           if (xQueueSend(motionQueue, &cmd1, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
           delay(100);
-          MotionCommand cmd2 = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, motionSpeedUs, activeProfile, false};
-          if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+          executeBaseMoveWithOvershoot(pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, motionSpeedUs);
         } else {
           // 현재가 더 높음
-          MotionCommand cmd1 = {pointA_up.steps_base, currentSteps_shoulder, currentSteps_elbow, motionSpeedUs, activeProfile, false};
-          if (xQueueSend(motionQueue, &cmd1, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+          executeBaseMoveWithOvershoot(pointA_up.steps_base, currentSteps_shoulder, currentSteps_elbow, motionSpeedUs);
           delay(100);
           MotionCommand cmd2 = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, activeProfile, false};
           if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
