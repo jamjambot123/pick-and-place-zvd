@@ -1034,19 +1034,12 @@ void taskControl(void* pv) {
         break;
       }
 
-      // ── 사이클: A위로 이동 (베이스 회전 → 높이 조절) ──
+      // ── 사이클: A위로 이동 ──
       case STATE_MOVE_TO_A: {
         Serial.printf("[CYCLE] → A위 (steps: %d,%d,%d)\n",
           (int)pointA_up.steps_base, (int)pointA_up.steps_shoulder, (int)pointA_up.steps_elbow);
-        // 1) 베이스 회전 (숙더/엘보 현재 위치 유지)
-        MotionCommand cmd1 = {pointA_up.steps_base, currentSteps_shoulder, currentSteps_elbow, motionSpeedUs, activeProfile, false};
-        if (xQueueSend(motionQueue, &cmd1, pdMS_TO_TICKS(1000)) == pdTRUE) {
-          xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
-        }
-        delay(200);
-        // 2) 높이 조절 (베이스 유지, 숙더/엘보 이동)
-        MotionCommand cmd2 = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, activeProfile, false};
-        if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        MotionCommand cmd = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, motionSpeedUs, activeProfile, false};
+        if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
         delay(200);
@@ -1085,19 +1078,12 @@ void taskControl(void* pv) {
         break;
       }
 
-      // ── B위로 이동 (베이스 회전 → 높이 조절) ──
+      // ── B위로 이동 ──
       case STATE_MOVE_TO_B: {
         Serial.printf("[CYCLE] → B위 (steps: %d,%d,%d)\n",
           (int)pointB_up.steps_base, (int)pointB_up.steps_shoulder, (int)pointB_up.steps_elbow);
-        // 1) 베이스 회전
-        MotionCommand cmd1 = {pointB_up.steps_base, currentSteps_shoulder, currentSteps_elbow, motionSpeedUs, activeProfile, false};
-        if (xQueueSend(motionQueue, &cmd1, pdMS_TO_TICKS(1000)) == pdTRUE) {
-          xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
-        }
-        delay(200);
-        // 2) 높이 조절
-        MotionCommand cmd2 = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, vertSpeedUs, activeProfile, false};
-        if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        MotionCommand cmd = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, motionSpeedUs, activeProfile, false};
+        if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
         delay(200);
@@ -1165,18 +1151,11 @@ void taskControl(void* pv) {
         break;
       }
 
-      // ── A위로 복귀 (베이스 회전 → 높이 조절) ──
+      // ── A위로 복귀 ──
       case STATE_RETURN_A: {
         Serial.println("[CYCLE] →A위(복귀)");
-        // 1) 베이스 회전
-        MotionCommand cmd1 = {pointA_up.steps_base, currentSteps_shoulder, currentSteps_elbow, motionSpeedUs, activeProfile, false};
-        if (xQueueSend(motionQueue, &cmd1, pdMS_TO_TICKS(1000)) == pdTRUE) {
-          xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
-        }
-        delay(200);
-        // 2) 높이 조절
-        MotionCommand cmd2 = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, activeProfile, false};
-        if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        MotionCommand cmd = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, motionSpeedUs, activeProfile, false};
+        if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
         delay(200);
