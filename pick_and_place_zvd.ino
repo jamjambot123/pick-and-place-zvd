@@ -50,7 +50,7 @@
 #define LIMIT_SHOULDER_ACTIVE LOW
 #define LIMIT_ELBOW_ACTIVE    HIGH
 
-#define RELAY_VACUUM_PUMP     20   // HIGH: 펌프 가동 (진공 흡착)
+#define RELAY_VACUUM_PUMP     21   // HIGH: 펌프 가동 (진공 흡착)
 
 #define MPU6050_SDA           17   // I2C 데이터 라인
 #define MPU6050_SCL           18   // I2C 클럭 라인
@@ -365,7 +365,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       <tr class="cat-s"><td>Base Limit</td><td>1</td><td>리밋 스위치</td><td>NC (HIGH=눌림)</td></tr>
       <tr class="cat-s"><td>Shoulder Limit</td><td>2</td><td>리밋 스위치</td><td>NO (LOW=눌림)</td></tr>
       <tr class="cat-s"><td>Elbow Limit</td><td>47</td><td>리밋 스위치</td><td>NC (HIGH=눌림)</td></tr>
-      <tr class="cat-r"><td>Vacuum Pump</td><td>20</td><td>릴레이 #1 IN</td><td>HIGH=가동</td></tr>
+      <tr class="cat-r"><td>Vacuum Pump</td><td>21</td><td>릴레이 #1 IN</td><td>HIGH=가동</td></tr>
       <tr class="cat-i"><td>MPU6050 SDA</td><td>17</td><td>MPU6050</td><td rowspan="2">I2C 3.3V</td></tr>
       <tr class="cat-i"><td>MPU6050 SCL</td><td>18</td><td>MPU6050</td></tr>
     </table>
@@ -898,8 +898,11 @@ void taskControl(void* pv) {
 
 void setupWiFiAndWeb() {
   Serial.println("[WIFI] AP 모드 초기화 시작...");
+  WiFi.disconnect(true);
+  delay(100);
   WiFi.mode(WIFI_AP);
-  WiFi.softAP("RobotArm_ZVD_WiFi", "12345678");
+  WiFi.softAP("RobotArm_ZVD_WiFi", "12345678", 1, 0, 4);
+  WiFi.setSleep(false); // 와이파이 절전모드 해제 (연결 안정성 향상)
   
   IPAddress IP = WiFi.softAPIP();
   Serial.print("[WIFI] AP 설정 완료. IP 주소: ");
