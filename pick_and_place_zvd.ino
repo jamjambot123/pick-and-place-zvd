@@ -1072,7 +1072,7 @@ void taskControl(void* pv) {
         float destZ = getZFromSteps(pointA_up.steps_shoulder, pointA_up.steps_elbow);
         if (destZ > curZ) {
           // 목적지가 더 높음: 제자리 상승 후 수평 회전
-          MotionCommand cmd1 = {currentSteps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, activeProfile, false};
+          MotionCommand cmd1 = {currentSteps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, PROFILE_SCURVE, false};
           if (xQueueSend(motionQueue, &cmd1, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
           delay(100);
           executeBaseMoveWithOvershoot(pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, motionSpeedUs);
@@ -1080,7 +1080,7 @@ void taskControl(void* pv) {
           // 현재가 더 높음: 높은 층에서 수평 회전 후 목적지로 하강
           executeBaseMoveWithOvershoot(pointA_up.steps_base, currentSteps_shoulder, currentSteps_elbow, motionSpeedUs);
           delay(100);
-          MotionCommand cmd2 = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, activeProfile, false};
+          MotionCommand cmd2 = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, PROFILE_SCURVE, false};
           if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
         delay(500); // 하강 전 진동 안정화 딜레이
@@ -1091,7 +1091,7 @@ void taskControl(void* pv) {
       // ── A아래로 하강 ──
       case STATE_DESCEND_A: {
         Serial.println("[CYCLE] A↓");
-        MotionCommand cmd = {pointA_down.steps_base, pointA_down.steps_shoulder, pointA_down.steps_elbow, vertSpeedUs, activeProfile, false};
+        MotionCommand cmd = {pointA_down.steps_base, pointA_down.steps_shoulder, pointA_down.steps_elbow, vertSpeedUs, PROFILE_SCURVE, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
@@ -1110,7 +1110,7 @@ void taskControl(void* pv) {
 
       // ── A위로 상승 ──
       case STATE_ASCEND_A: {
-        MotionCommand cmd = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, activeProfile, false};
+        MotionCommand cmd = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, PROFILE_SCURVE, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
@@ -1126,7 +1126,7 @@ void taskControl(void* pv) {
         float destZ = getZFromSteps(pointB_up.steps_shoulder, pointB_up.steps_elbow);
         if (destZ > curZ) {
           // 목적지가 더 높음: 제자리 상승 후 수평 회전
-          MotionCommand cmd1 = {currentSteps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, vertSpeedUs, activeProfile, false};
+          MotionCommand cmd1 = {currentSteps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, vertSpeedUs, PROFILE_SCURVE, false};
           if (xQueueSend(motionQueue, &cmd1, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
           delay(100);
           executeBaseMoveWithOvershoot(pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, motionSpeedUs);
@@ -1134,7 +1134,7 @@ void taskControl(void* pv) {
           // 현재가 더 높음: 높은 층에서 수평 회전 후 목적지로 하강
           executeBaseMoveWithOvershoot(pointB_up.steps_base, currentSteps_shoulder, currentSteps_elbow, motionSpeedUs);
           delay(100);
-          MotionCommand cmd2 = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, vertSpeedUs, activeProfile, false};
+          MotionCommand cmd2 = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, vertSpeedUs, PROFILE_SCURVE, false};
           if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
         delay(500); // 하강 전 진동 안정화 딜레이
@@ -1145,7 +1145,7 @@ void taskControl(void* pv) {
       // ── B아래로 하강 ──
       case STATE_DESCEND_B: {
         Serial.println("[CYCLE] B↓");
-        MotionCommand cmd = {pointB_down.steps_base, pointB_down.steps_shoulder, pointB_down.steps_elbow, vertSpeedUs, activeProfile, false};
+        MotionCommand cmd = {pointB_down.steps_base, pointB_down.steps_shoulder, pointB_down.steps_elbow, vertSpeedUs, PROFILE_SCURVE, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
@@ -1162,7 +1162,7 @@ void taskControl(void* pv) {
 
       // ── B위로 상승 후 복귀 ──
       case STATE_ASCEND_B: {
-        MotionCommand cmd = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, vertSpeedUs, activeProfile, false};
+        MotionCommand cmd = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, vertSpeedUs, PROFILE_SCURVE, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
@@ -1177,14 +1177,14 @@ void taskControl(void* pv) {
         float curZ = getZFromSteps(currentSteps_shoulder, currentSteps_elbow);
         float destZ = getZFromSteps(pointA_up.steps_shoulder, pointA_up.steps_elbow);
         if (destZ > curZ) {
-          MotionCommand cmd1 = {currentSteps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, activeProfile, false};
+          MotionCommand cmd1 = {currentSteps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, PROFILE_SCURVE, false};
           if (xQueueSend(motionQueue, &cmd1, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
           delay(100);
           executeBaseMoveWithOvershoot(pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, motionSpeedUs);
         } else {
           executeBaseMoveWithOvershoot(pointA_up.steps_base, currentSteps_shoulder, currentSteps_elbow, motionSpeedUs);
           delay(100);
-          MotionCommand cmd2 = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, activeProfile, false};
+          MotionCommand cmd2 = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, PROFILE_SCURVE, false};
           if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
         delay(500);
