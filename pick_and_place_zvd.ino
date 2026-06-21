@@ -132,52 +132,55 @@ struct MPU6050_Data { float ax, ay, az; float gx, gy, gz; };
 // ██  섹션 4: 픽앤플레이스 티칭 설정 (관절 스텝 저장 방식)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// 티칭된 위치 (관절 스텝 카운터로 저장 — IK 불필요)
+// 티칭된 위치 (관절 스텝 카운터로 저장 — IK 완전 불필요)
 struct TeachPoint {
   int32_t steps_base;
   int32_t steps_shoulder;
   int32_t steps_elbow;
   bool saved;
 };
-TeachPoint pointA = {0, 0, 0, false};
-TeachPoint pointB = {0, 0, 0, false};
-float zDescentMM = 30.0f;       // Z 하강 거리 (mm) — 이 부분만 IK 사용
-volatile bool webCmd_SaveA = false;
-volatile bool webCmd_SaveB = false;
-volatile bool webCmd_ContinuousCycle = false;  // 무한 반복 플래그
-volatile int32_t cycleCount = 0;  // 완료된 사이클 수
+TeachPoint pointA_up   = {0, 0, 0, false};  // A 위 (대기 높이)
+TeachPoint pointA_down = {0, 0, 0, false};  // A 아래 (집는 높이)
+TeachPoint pointB_up   = {0, 0, 0, false};  // B 위 (대기 높이)
+TeachPoint pointB_down = {0, 0, 0, false};  // B 아래 (놓는 높이)
+volatile bool webCmd_SaveAU = false;
+volatile bool webCmd_SaveAD = false;
+volatile bool webCmd_SaveBU = false;
+volatile bool webCmd_SaveBD = false;
+volatile bool webCmd_ContinuousCycle = false;
+volatile int32_t cycleCount = 0;
 
 Preferences prefs;
 
+void saveOnePoint(const char* prefix, TeachPoint& pt) {
+  char key[16];
+  snprintf(key, sizeof(key), "%s_b", prefix); prefs.putInt(key, pt.steps_base);
+  snprintf(key, sizeof(key), "%s_s", prefix); prefs.putInt(key, pt.steps_shoulder);
+  snprintf(key, sizeof(key), "%s_e", prefix); prefs.putInt(key, pt.steps_elbow);
+  snprintf(key, sizeof(key), "%s_ok", prefix); prefs.putBool(key, pt.saved);
+}
+void loadOnePoint(const char* prefix, TeachPoint& pt) {
+  char key[16];
+  snprintf(key, sizeof(key), "%s_b", prefix); pt.steps_base = prefs.getInt(key, 0);
+  snprintf(key, sizeof(key), "%s_s", prefix); pt.steps_shoulder = prefs.getInt(key, 0);
+  snprintf(key, sizeof(key), "%s_e", prefix); pt.steps_elbow = prefs.getInt(key, 0);
+  snprintf(key, sizeof(key), "%s_ok", prefix); pt.saved = prefs.getBool(key, false);
+}
 void saveTeachPoints() {
   prefs.begin("teach", false);
-  prefs.putInt("a_base", pointA.steps_base);
-  prefs.putInt("a_sh", pointA.steps_shoulder);
-  prefs.putInt("a_el", pointA.steps_elbow);
-  prefs.putBool("a_ok", pointA.saved);
-  prefs.putInt("b_base", pointB.steps_base);
-  prefs.putInt("b_sh", pointB.steps_shoulder);
-  prefs.putInt("b_el", pointB.steps_elbow);
-  prefs.putBool("b_ok", pointB.saved);
-  prefs.putFloat("z_desc", zDescentMM);
+  saveOnePoint("au", pointA_up); saveOnePoint("ad", pointA_down);
+  saveOnePoint("bu", pointB_up); saveOnePoint("bd", pointB_down);
   prefs.end();
   Serial.println("[FLASH] 티칭 데이터 저장 완료");
 }
-
 void loadTeachPoints() {
-  prefs.begin("teach", true);  // 읽기 전용
-  pointA.steps_base = prefs.getInt("a_base", 0);
-  pointA.steps_shoulder = prefs.getInt("a_sh", 0);
-  pointA.steps_elbow = prefs.getInt("a_el", 0);
-  pointA.saved = prefs.getBool("a_ok", false);
-  pointB.steps_base = prefs.getInt("b_base", 0);
-  pointB.steps_shoulder = prefs.getInt("b_sh", 0);
-  pointB.steps_elbow = prefs.getInt("b_el", 0);
-  pointB.saved = prefs.getBool("b_ok", false);
-  zDescentMM = prefs.getFloat("z_desc", 30.0f);
+  prefs.begin("teach", true);
+  loadOnePoint("au", pointA_up); loadOnePoint("ad", pointA_down);
+  loadOnePoint("bu", pointB_up); loadOnePoint("bd", pointB_down);
   prefs.end();
-  Serial.printf("[FLASH] 티칭 로드: A=%s, B=%s, Z=%.0fmm\n",
-    pointA.saved ? "OK" : "X", pointB.saved ? "OK" : "X", zDescentMM);
+  Serial.printf("[FLASH] 로드: A위=%s A아래=%s B위=%s B아래=%s\n",
+    pointA_up.saved?"OK":"X", pointA_down.saved?"OK":"X",
+    pointB_up.saved?"OK":"X", pointB_down.saved?"OK":"X");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -374,25 +377,23 @@ const char index_html[] PROGMEM = R"rawliteral(
     
     <!-- 우측 패널: 티칭 설정 -->
     <div class="glass-card">
-      <h2>📍 티칭 (위치 저장)</h2>
-      <p style="color:var(--text-dim);font-size:0.85rem;margin:0 0 15px;">관절 조그로 원하는 위치에 팔을 놓은 후 저장 버튼을 누르세요.</p>
+      <h2>📍 4점 티칭</h2>
+      <p style="color:var(--text-dim);font-size:0.85rem;margin:0 0 15px;">조그로 팔을 이동 후 각 위치를 저장하세요.</p>
       
-      <div style="margin-bottom: 20px;">
-        <h3 style="color:var(--primary); margin: 0 0 8px 0; font-size: 1rem;">Point A (피킹 위치)</h3>
-        <div id="ptA_info" class="data-row"><span>상태</span><span class="data-val" style="color:#f43f5e;">미저장</span></div>
-        <button class="btn btn-secondary" style="padding:8px;width:100%;" onclick="sendCommand('saveA')">📌 현재 위치를 A로 저장</button>
-      </div>
-      
-      <div style="margin-bottom: 20px;">
-        <h3 style="color:var(--accent); margin: 0 0 8px 0; font-size: 1rem;">Point B (배치 위치)</h3>
-        <div id="ptB_info" class="data-row"><span>상태</span><span class="data-val" style="color:#f43f5e;">미저장</span></div>
-        <button class="btn btn-secondary" style="padding:8px;width:100%;" onclick="sendCommand('saveB')">📌 현재 위치를 B로 저장</button>
+      <div style="margin-bottom:15px;">
+        <h3 style="color:var(--primary); margin:0 0 8px; font-size:1rem;">Point A (피킹)</h3>
+        <div id="ptAU" class="data-row"><span>A 위 (대기)</span><span class="data-val" style="color:#f43f5e;">❌</span></div>
+        <button class="btn btn-secondary" style="padding:6px;width:100%;margin-bottom:4px;" onclick="sendCommand('saveAU')">📌 A위 저장 (대기높이)</button>
+        <div id="ptAD" class="data-row"><span>A 아래 (집기)</span><span class="data-val" style="color:#f43f5e;">❌</span></div>
+        <button class="btn btn-secondary" style="padding:6px;width:100%;" onclick="sendCommand('saveAD')">📌 A아래 저장 (칩높이)</button>
       </div>
       
       <div style="margin-bottom:15px;">
-        <h3 style="color:var(--text-dim); margin: 0 0 8px 0; font-size: 1rem;">Z 하강 거리 (mm)</h3>
-        <div class="input-group"><label>mm</label><input type="number" id="zDesc" value="30" min="5" max="100" step="1"></div>
-        <button class="btn btn-secondary" style="padding:8px;" onclick="setZdesc()">적용</button>
+        <h3 style="color:var(--accent); margin:0 0 8px; font-size:1rem;">Point B (배치)</h3>
+        <div id="ptBU" class="data-row"><span>B 위 (대기)</span><span class="data-val" style="color:#f43f5e;">❌</span></div>
+        <button class="btn btn-secondary" style="padding:6px;width:100%;margin-bottom:4px;" onclick="sendCommand('saveBU')">📌 B위 저장 (대기높이)</button>
+        <div id="ptBD" class="data-row"><span>B 아래 (놓기)</span><span class="data-val" style="color:#f43f5e;">❌</span></div>
+        <button class="btn btn-secondary" style="padding:6px;width:100%;" onclick="sendCommand('saveBD')">📌 B아래 저장 (놓는높이)</button>
       </div>
       
       <div id="cycleInfo" class="data-row" style="margin-bottom:10px;"><span>사이클 횟수</span><span class="data-val">0</span></div>
@@ -491,11 +492,11 @@ const char index_html[] PROGMEM = R"rawliteral(
           ['ax','ay','az','gx','gy','gz'].forEach(k => { const el=document.getElementById('m_'+k); if(el && data[k]!=null) el.innerText=data[k].toFixed(2); });
           const ms=document.getElementById('mpu_st'); if(ms){ms.innerText=data.mpu_ok?'CONNECTED':'DISCONNECTED'; ms.style.color=data.mpu_ok?'#10b981':'#f43f5e';}
           document.getElementById('rp_dot').className = data.relay_pump ? 'relay-dot active' : 'relay-dot';
-          // 티칭 상태 표시
-          const ptAInfo = document.getElementById('ptA_info');
-          if(ptAInfo) ptAInfo.innerHTML = '<span>상태</span><span class="data-val" style="color:'+(data.ptA_saved?'#10b981':'#f43f5e')+';">'+(data.ptA_saved?'✅ 저장됨':'❌ 미저장')+'</span>';
-          const ptBInfo = document.getElementById('ptB_info');
-          if(ptBInfo) ptBInfo.innerHTML = '<span>상태</span><span class="data-val" style="color:'+(data.ptB_saved?'#10b981':'#f43f5e')+';">'+(data.ptB_saved?'✅ 저장됨':'❌ 미저장')+'</span>';
+          // 4점 티칭 상태 표시
+          ['AU','AD','BU','BD'].forEach(k => {
+            const el = document.getElementById('pt'+k);
+            if(el) { const ok = data['pt'+k]; el.querySelector('.data-val').innerHTML = ok ? '✅' : '❌'; el.querySelector('.data-val').style.color = ok ? '#10b981' : '#f43f5e'; }
+          });
           const cycInfo = document.getElementById('cycleInfo');
           if(cycInfo) cycInfo.innerHTML = '<span>사이클 횟수</span><span class="data-val">'+data.cycles+'</span>';
         }).catch(err => console.error(err));
@@ -503,10 +504,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     function sendCommand(cmd) {
       fetch('/api/command?c=' + cmd, { method: 'POST' }).then(res => { if(res.ok) updateStatus(); });
     }
-    function setZdesc() {
-      const v = document.getElementById('zDesc').value || 30;
-      fetch('/api/command?c=zdesc&val='+v, { method:'POST' }).then(r => { if(r.ok) alert('Z하강 '+v+'mm 적용'); });
-    }
+
     function testCmd(target, state) {
       const f = new URLSearchParams(); f.append('target',target); f.append('state',state);
       fetch('/api/test_cmd', { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:f }).then(r => { if(!r.ok) alert('BUSY'); });
@@ -942,37 +940,27 @@ void taskControl(void* pv) {
             }
           }
         }
-        // 위치 저장 처리
-        if (webCmd_SaveA) {
-          webCmd_SaveA = false;
+        // 4점 위치 저장 처리
+        auto doSave = [](volatile bool& flag, TeachPoint& pt, const char* name) {
+          if (!flag) return;
+          flag = false;
           portENTER_CRITICAL(&stepsMux);
-          pointA.steps_base = currentSteps_base;
-          pointA.steps_shoulder = currentSteps_shoulder;
-          pointA.steps_elbow = currentSteps_elbow;
+          pt.steps_base = currentSteps_base;
+          pt.steps_shoulder = currentSteps_shoulder;
+          pt.steps_elbow = currentSteps_elbow;
           portEXIT_CRITICAL(&stepsMux);
-          pointA.saved = true;
-          CartesianPoint p = solveFK();
-          Serial.printf("[TEACH] Point A saved: steps(%d,%d,%d) pos(%.1f,%.1f,%.1f)\n",
-            (int)pointA.steps_base, (int)pointA.steps_shoulder, (int)pointA.steps_elbow, p.x, p.y, p.z);
+          pt.saved = true;
+          Serial.printf("[TEACH] %s saved: steps(%d,%d,%d)\n", name, (int)pt.steps_base, (int)pt.steps_shoulder, (int)pt.steps_elbow);
           saveTeachPoints();
-        }
-        if (webCmd_SaveB) {
-          webCmd_SaveB = false;
-          portENTER_CRITICAL(&stepsMux);
-          pointB.steps_base = currentSteps_base;
-          pointB.steps_shoulder = currentSteps_shoulder;
-          pointB.steps_elbow = currentSteps_elbow;
-          portEXIT_CRITICAL(&stepsMux);
-          pointB.saved = true;
-          CartesianPoint p = solveFK();
-          Serial.printf("[TEACH] Point B saved: steps(%d,%d,%d) pos(%.1f,%.1f,%.1f)\n",
-            (int)pointB.steps_base, (int)pointB.steps_shoulder, (int)pointB.steps_elbow, p.x, p.y, p.z);
-          saveTeachPoints();
-        }
+        };
+        doSave(webCmd_SaveAU, pointA_up, "A위");
+        doSave(webCmd_SaveAD, pointA_down, "A아래");
+        doSave(webCmd_SaveBU, pointB_up, "B위");
+        doSave(webCmd_SaveBD, pointB_down, "B아래");
         // 사이클 시작
         if (webCmd_ContinuousCycle) {
-          if (!isHomed || !pointA.saved || !pointB.saved) {
-            Serial.println("[ERROR] HOME + Point A/B 모두 저장 필요!");
+          if (!isHomed || !pointA_up.saved || !pointA_down.saved || !pointB_up.saved || !pointB_down.saved) {
+            Serial.println("[ERROR] HOME + 4점 모두 저장 필요!");
             webCmd_ContinuousCycle = false;
           } else {
             digitalWrite(RELAY_VACUUM_PUMP, RELAY_OFF);
@@ -983,11 +971,11 @@ void taskControl(void* pv) {
         }
         break;
 
-      // ── 사이클: A로 이동 (관절 직접 이동, IK 없음) ──
+      // ── 사이클: A위로 이동 ──
       case STATE_MOVE_TO_A: {
-        Serial.printf("[CYCLE] Moving to A (steps: %d,%d,%d)\n",
-          (int)pointA.steps_base, (int)pointA.steps_shoulder, (int)pointA.steps_elbow);
-        MotionCommand cmd = {pointA.steps_base, pointA.steps_shoulder, pointA.steps_elbow, 800, true, false};
+        Serial.printf("[CYCLE] → A위 (steps: %d,%d,%d)\n",
+          (int)pointA_up.steps_base, (int)pointA_up.steps_shoulder, (int)pointA_up.steps_elbow);
+        MotionCommand cmd = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, 800, true, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
@@ -996,17 +984,14 @@ void taskControl(void* pv) {
         break;
       }
 
-      // ── A에서 Z 하강 (짧은 거리, IK 사용) ──
+      // ── A아래로 하강 (관절 직접 이동, IK 없음) ──
       case STATE_DESCEND_A: {
-        CartesianPoint cur = solveFK();
-        float targetZ_A = cur.z - zDescentMM;
-        Serial.printf("[DESCEND_A] cur=(%.1f, %.1f, %.1f) targetZ=%.1f\n", cur.x, cur.y, cur.z, targetZ_A);
-        if (!moveLinearXYZ(cur.x, cur.y, targetZ_A, 1200)) {
-          Serial.println("[CYCLE] A descend IK fail!");
-          webCmd_ContinuousCycle = false;
-          currentState = STATE_IDLE;
-          break;
+        Serial.println("[CYCLE] A↓");
+        MotionCommand cmd = {pointA_down.steps_base, pointA_down.steps_shoulder, pointA_down.steps_elbow, 1200, false, false};
+        if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
+          xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
+        delay(100);
         currentState = STATE_PICK;
         break;
       }
@@ -1017,9 +1002,9 @@ void taskControl(void* pv) {
         currentState = STATE_ASCEND_A;
         break;
 
-      // ── A에서 Z 상승 (저장된 A 위치로 복귀) ──
+      // ── A위로 상승 ──
       case STATE_ASCEND_A: {
-        MotionCommand cmd = {pointA.steps_base, pointA.steps_shoulder, pointA.steps_elbow, 800, true, false};
+        MotionCommand cmd = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, 800, true, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
@@ -1028,11 +1013,11 @@ void taskControl(void* pv) {
         break;
       }
 
-      // ── B로 이동 (관절 직접 이동, IK 없음) ──
+      // ── B위로 이동 ──
       case STATE_MOVE_TO_B: {
-        Serial.printf("[CYCLE] Moving to B (steps: %d,%d,%d)\n",
-          (int)pointB.steps_base, (int)pointB.steps_shoulder, (int)pointB.steps_elbow);
-        MotionCommand cmd = {pointB.steps_base, pointB.steps_shoulder, pointB.steps_elbow, 800, true, false};
+        Serial.printf("[CYCLE] → B위 (steps: %d,%d,%d)\n",
+          (int)pointB_up.steps_base, (int)pointB_up.steps_shoulder, (int)pointB_up.steps_elbow);
+        MotionCommand cmd = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, 800, true, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
@@ -1041,18 +1026,14 @@ void taskControl(void* pv) {
         break;
       }
 
-      // ── B에서 Z 하강 ──
+      // ── B아래로 하강 ──
       case STATE_DESCEND_B: {
-        CartesianPoint cur = solveFK();
-        float targetZ_B = cur.z - zDescentMM;
-        Serial.printf("[DESCEND_B] cur=(%.1f, %.1f, %.1f) targetZ=%.1f\n", cur.x, cur.y, cur.z, targetZ_B);
-        if (!moveLinearXYZ(cur.x, cur.y, targetZ_B, 1200)) {
-          Serial.println("[CYCLE] B descend IK fail!");
-          vacuumRelease(200);
-          webCmd_ContinuousCycle = false;
-          currentState = STATE_IDLE;
-          break;
+        Serial.println("[CYCLE] B↓");
+        MotionCommand cmd = {pointB_down.steps_base, pointB_down.steps_shoulder, pointB_down.steps_elbow, 1200, false, false};
+        if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
+          xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
+        delay(100);
         currentState = STATE_PLACE;
         break;
       }
@@ -1063,9 +1044,9 @@ void taskControl(void* pv) {
         currentState = STATE_ASCEND_B;
         break;
 
-      // ── B에서 Z 상승 후 반복 ──
+      // ── B위로 상승 후 반복 ──
       case STATE_ASCEND_B: {
-        MotionCommand cmd = {pointB.steps_base, pointB.steps_shoulder, pointB.steps_elbow, 800, true, false};
+        MotionCommand cmd = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, 800, true, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
@@ -1127,14 +1108,14 @@ void setupWiFiAndWeb() {
       "\"cur_pos\":{\"x\":%.1f,\"y\":%.1f,\"z\":%.1f},"
       "\"ax\":%.3f,\"ay\":%.3f,\"az\":%.3f,\"gx\":%.2f,\"gy\":%.2f,\"gz\":%.2f,"
       "\"freq\":%.2f,\"zeta\":%.3f,"
-      "\"ptA_saved\":%d,\"ptB_saved\":%d,\"cycles\":%d,\"z_desc\":%.0f,"
+      "\"ptAU\":%d,\"ptAD\":%d,\"ptBU\":%d,\"ptBD\":%d,\"cycles\":%d,"
       "\"sw_base\":%d,\"sw_shoulder\":%d,\"sw_elbow\":%d,"
       "\"relay_pump\":%d,\"mpu_ok\":%d}",
       (int)currentState, stateStrings[currentState].c_str(),
       fk.x, fk.y, fk.z,
       md.ax, md.ay, md.az, md.gx, md.gy, md.gz,
       zvd_natural_freq_hz, zvd_damping_ratio,
-      pointA.saved ? 1 : 0, pointB.saved ? 1 : 0, (int)cycleCount, zDescentMM,
+      pointA_up.saved?1:0, pointA_down.saved?1:0, pointB_up.saved?1:0, pointB_down.saved?1:0, (int)cycleCount,
       sb, ss, se, rp, mpu_connected ? 1 : 0);
     server.send(200, "application/json", json);
   });
@@ -1144,15 +1125,12 @@ void setupWiFiAndWeb() {
     if(server.hasArg("c")){
       String cmd = server.arg("c");
       if(cmd == "startCycle") webCmd_ContinuousCycle = true;
-      else if(cmd == "saveA") webCmd_SaveA = true;
-      else if(cmd == "saveB") webCmd_SaveB = true;
+      else if(cmd == "saveAU") webCmd_SaveAU = true;
+      else if(cmd == "saveAD") webCmd_SaveAD = true;
+      else if(cmd == "saveBU") webCmd_SaveBU = true;
+      else if(cmd == "saveBD") webCmd_SaveBD = true;
       else if(cmd == "rehome") webCmd_Rehome = true;
       else if(cmd == "tune") webCmd_TuneZVD = true;
-      else if(cmd == "zdesc" && server.hasArg("val")) {
-        zDescentMM = constrain(server.arg("val").toFloat(), 5.0f, 100.0f);
-        Serial.printf("[CONFIG] Z descent = %.1f mm\n", zDescentMM);
-        saveTeachPoints();
-      }
       else if(cmd == "estop") {
         webCmd_EStop = true;
         webCmd_ContinuousCycle = false;  // 사이클 중단
