@@ -47,8 +47,7 @@
 #define LIMIT_SHOULDER_ACTIVE LOW
 #define LIMIT_ELBOW_ACTIVE    HIGH
 
-#define RELAY_VACUUM_PUMP     48   // HIGH: 진공 펌프 가동 (흡착)
-#define RELAY_RELEASE_VALVE   21   // HIGH: 솔레노이드 밸브 개방 (진공 해제)
+#define RELAY_VACUUM_PUMP     20   // HIGH: 펌프 가동 (진공 흡착)
 
 #define MPU6050_SDA           17   // I2C 데이터 라인
 #define MPU6050_SCL           18   // I2C 클럭 라인
@@ -356,8 +355,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       <tr class="cat-s"><td>Base Limit</td><td>1</td><td>리밋 스위치</td><td>NC (HIGH=눌림)</td></tr>
       <tr class="cat-s"><td>Shoulder Limit</td><td>2</td><td>리밋 스위치</td><td>NO (LOW=눌림)</td></tr>
       <tr class="cat-s"><td>Elbow Limit</td><td>47</td><td>리밋 스위치</td><td>NC (HIGH=눌림)</td></tr>
-      <tr class="cat-r"><td>Vacuum Pump</td><td>48</td><td>릴레이 #1 IN</td><td>HIGH=가동</td></tr>
-      <tr class="cat-r"><td>Air Valve</td><td>21</td><td>릴레이 #2 IN</td><td>HIGH=열림</td></tr>
+      <tr class="cat-r"><td>Vacuum Pump</td><td>20</td><td>릴레이 #1 IN</td><td>HIGH=가동</td></tr>
       <tr class="cat-i"><td>MPU6050 SDA</td><td>17</td><td>MPU6050</td><td rowspan="2">I2C 3.3V</td></tr>
       <tr class="cat-i"><td>MPU6050 SCL</td><td>18</td><td>MPU6050</td></tr>
     </table>
@@ -384,11 +382,9 @@ const char index_html[] PROGMEM = R"rawliteral(
       </div>
       <div>
         <h3 style="color:var(--text-dim); margin-bottom:10px;">릴레이 제어</h3>
-        <div class="data-row" style="margin-bottom:8px;"><span style="display:flex;align-items:center;"><span id="rp_dot" class="relay-dot"></span>진공 펌프</span>
+        <div class="data-row" style="margin-bottom:15px;"><span style="display:flex;align-items:center;"><span id="rp_dot" class="relay-dot"></span>진공 펌프</span>
           <span><button class="jog-btn" onclick="testCmd('pump',1)">ON</button> <button class="jog-btn" onclick="testCmd('pump',0)">OFF</button></span></div>
-        <div class="data-row" style="margin-bottom:15px;"><span style="display:flex;align-items:center;"><span id="rv_dot" class="relay-dot"></span>에어 밸브</span>
-          <span><button class="jog-btn" onclick="testCmd('valve',1)">ON</button> <button class="jog-btn" onclick="testCmd('valve',0)">OFF</button></span></div>
-        <h3 style="color:var(--text-dim); margin-bottom:8px;">관절 모터 조그</h3>
+        <h3 style="color:var(--text-dim); margin:15px 0 8px;">관절 모터 조그</h3>
         <div style="margin-bottom:8px;"><label style="color:var(--text-dim);font-size:0.85rem;">스텝 수: </label><input type="number" id="jogN" class="jog-input" value="50" min="1" max="500"></div>
         <div class="jog-group"><label>베이스</label><button class="jog-btn" onclick="jog('base',-1)">◀ CCW</button><button class="jog-btn" onclick="jog('base',1)">CW ▶</button></div>
         <div class="jog-group"><label>숄더</label><button class="jog-btn" onclick="jog('shoulder',-1)">◀ CCW</button><button class="jog-btn" onclick="jog('shoulder',1)">CW ▶</button></div>
@@ -433,7 +429,6 @@ const char index_html[] PROGMEM = R"rawliteral(
           ['ax','ay','az','gx','gy','gz'].forEach(k => { const el=document.getElementById('m_'+k); if(el && data[k]!=null) el.innerText=data[k].toFixed(2); });
           const ms=document.getElementById('mpu_st'); if(ms){ms.innerText=data.mpu_ok?'CONNECTED':'DISCONNECTED'; ms.style.color=data.mpu_ok?'#10b981':'#f43f5e';}
           document.getElementById('rp_dot').className = data.relay_pump ? 'relay-dot active' : 'relay-dot';
-          document.getElementById('rv_dot').className = data.relay_valve ? 'relay-dot active' : 'relay-dot';
           if(initInputs) {
             document.getElementById('ax').value = data.pt_A.x;
             document.getElementById('ay').value = data.pt_A.y;
@@ -766,8 +761,8 @@ bool moveLinearXYZ(float tx, float ty, float tz, uint32_t spd) {
   return true;
 }
 
-void vacuumGrip(uint32_t w) { digitalWrite(RELAY_VACUUM_PUMP, HIGH); digitalWrite(RELAY_RELEASE_VALVE, LOW); delay(w); }
-void vacuumRelease(uint32_t w) { digitalWrite(RELAY_VACUUM_PUMP, LOW); digitalWrite(RELAY_RELEASE_VALVE, HIGH); delay(w); digitalWrite(RELAY_RELEASE_VALVE, LOW); }
+void vacuumGrip(uint32_t w) { digitalWrite(RELAY_VACUUM_PUMP, HIGH); delay(w); }
+void vacuumRelease(uint32_t w) { digitalWrite(RELAY_VACUUM_PUMP, LOW); delay(w); }
 
 void taskStepper(void* pv) {
   MotionCommand cmd;
@@ -815,7 +810,6 @@ void taskControl(void* pv) {
           webCmd_StartCycle = false;
           // 사이클 진입 전 릴레이 초기화 (테스트 모드에서 수동 ON 했을 수 있음)
           digitalWrite(RELAY_VACUUM_PUMP, LOW);
-          digitalWrite(RELAY_RELEASE_VALVE, LOW);
           currentState = STATE_APPROACH;
         }
         break;
@@ -881,7 +875,6 @@ void setupWiFiAndWeb() {
     int ss = (digitalRead(LIMIT_SHOULDER) == LIMIT_SHOULDER_ACTIVE) ? 1 : 0;
     int se = (digitalRead(LIMIT_ELBOW) == LIMIT_ELBOW_ACTIVE) ? 1 : 0;
     int rp = digitalRead(RELAY_VACUUM_PUMP);
-    int rv = digitalRead(RELAY_RELEASE_VALVE);
     MPU6050_Data md = {0};
     if (xSemaphoreTake(mpuMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
       md = mpu_data;
@@ -895,13 +888,13 @@ void setupWiFiAndWeb() {
       "\"freq\":%.2f,\"zeta\":%.3f,"
       "\"pt_A\":{\"x\":%.1f,\"y\":%.1f,\"z\":%.1f},\"pt_B\":{\"x\":%.1f,\"y\":%.1f,\"z\":%.1f},"
       "\"sw_base\":%d,\"sw_shoulder\":%d,\"sw_elbow\":%d,"
-      "\"relay_pump\":%d,\"relay_valve\":%d,\"mpu_ok\":%d}",
+      "\"relay_pump\":%d,\"mpu_ok\":%d}",
       (int)currentState, stateStrings[currentState].c_str(),
       fk.x, fk.y, fk.z,
       md.ax, md.ay, md.az, md.gx, md.gy, md.gz,
       zvd_natural_freq_hz, zvd_damping_ratio,
       POINT_A_X, POINT_A_Y, POINT_A_Z, POINT_B_X, POINT_B_Y, POINT_B_Z,
-      sb, ss, se, rp, rv, mpu_connected ? 1 : 0);
+      sb, ss, se, rp, mpu_connected ? 1 : 0);
     server.send(200, "application/json", json);
   });
 
@@ -945,7 +938,6 @@ void setupWiFiAndWeb() {
       String target = server.arg("target");
       int state = server.arg("state").toInt();
       if(target == "pump") digitalWrite(RELAY_VACUUM_PUMP, state ? HIGH : LOW);
-      else if(target == "valve") digitalWrite(RELAY_RELEASE_VALVE, state ? HIGH : LOW);
       else if(target.startsWith("jog_")) {
         int steps = 50;
         if(server.hasArg("steps")) steps = constrain(server.arg("steps").toInt(), 1, 500);
@@ -999,11 +991,10 @@ void setup() {
   pinMode(MOTOR2_SHOULDER_STEP, OUTPUT); pinMode(MOTOR2_SHOULDER_DIR, OUTPUT);
   pinMode(MOTOR3_ELBOW_STEP, OUTPUT); pinMode(MOTOR3_ELBOW_DIR, OUTPUT);
   pinMode(LIMIT_BASE, INPUT_PULLUP); pinMode(LIMIT_SHOULDER, INPUT_PULLUP); pinMode(LIMIT_ELBOW, INPUT_PULLUP);
-  pinMode(RELAY_VACUUM_PUMP, OUTPUT); pinMode(RELAY_RELEASE_VALVE, OUTPUT);
+  pinMode(RELAY_VACUUM_PUMP, OUTPUT);
   
   // 릴레이 초기값은 LOW (OFF)
   digitalWrite(RELAY_VACUUM_PUMP, LOW);
-  digitalWrite(RELAY_RELEASE_VALVE, LOW);
 
   // 리밋 스위치 자동 감지: 3개 스위치 중 하나라도 INPUT_PULLUP과 다른 신호면 연결된 것
   // (풀업 상태에서 NC 스위치가 연결되면 HIGH, NO 스위치가 연결되면 LOW를 보냄)
