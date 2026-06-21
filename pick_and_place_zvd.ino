@@ -772,16 +772,11 @@ bool homeSingleAxis(int pinStep, int pinDir, int pinLim, int activeLevel, int ho
     if (i > 0 && i % 20 == 0) { vTaskDelay(pdMS_TO_TICKS(1)); }
   }
 
-  // 4단계: 영점 설정 후 초기위치까지 오프셋 이동
-  ctr = 0;
-  if (homeOffset > 0) {
-    delay(HOME_DWELL_MS);
-    digitalWrite(pinDir, backDir); delayMicroseconds(5);
-    for (int i = 0; i < homeOffset; i++) {
-      stepPulse(pinStep); delayMicroseconds(HOMING_SPEED_US);
-      if (i > 0 && i % 50 == 0) { vTaskDelay(pdMS_TO_TICKS(1)); }
-    }
+  // 4단계: 영점 설정 (물리적 후퇴 없이 현재 위치를 오프셋 위치로 수학적 선언만 함)
+  if (homingDir == LOW) {
     ctr = homeOffset;
+  } else {
+    ctr = -homeOffset;
   }
   delay(HOME_DWELL_MS);
   if (pinStep == MOTOR1_BASE_STEP) digitalWrite(MOTOR1_BASE_ENA, HIGH);
