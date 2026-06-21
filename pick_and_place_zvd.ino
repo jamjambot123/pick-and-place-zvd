@@ -50,7 +50,10 @@
 #define LIMIT_SHOULDER_ACTIVE LOW
 #define LIMIT_ELBOW_ACTIVE    HIGH
 
-#define RELAY_VACUUM_PUMP     21   // HIGH: 펌프 가동 (진공 흡착)
+#define RELAY_VACUUM_PUMP     21   // 진공 펌프 릴레이 제어 핀
+// Low-Level Trigger 릴레이 로직 (LOW=켜짐, HIGH=꺼짐)
+#define RELAY_ON              LOW
+#define RELAY_OFF             HIGH
 
 #define MPU6050_SDA           17   // I2C 데이터 라인
 #define MPU6050_SCL           18   // I2C 클럭 라인
@@ -365,7 +368,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       <tr class="cat-s"><td>Base Limit</td><td>1</td><td>리밋 스위치</td><td>NC (HIGH=눌림)</td></tr>
       <tr class="cat-s"><td>Shoulder Limit</td><td>2</td><td>리밋 스위치</td><td>NO (LOW=눌림)</td></tr>
       <tr class="cat-s"><td>Elbow Limit</td><td>47</td><td>리밋 스위치</td><td>NC (HIGH=눌림)</td></tr>
-      <tr class="cat-r"><td>Vacuum Pump</td><td>21</td><td>릴레이 #1 IN</td><td>HIGH=가동</td></tr>
+      <tr class="cat-r"><td>Vacuum Pump</td><td>21</td><td>릴레이 #1 IN</td><td>LOW=가동 (Low-Trigger)</td></tr>
       <tr class="cat-i"><td>MPU6050 SDA</td><td>17</td><td>MPU6050</td><td rowspan="2">I2C 3.3V</td></tr>
       <tr class="cat-i"><td>MPU6050 SCL</td><td>18</td><td>MPU6050</td></tr>
     </table>
@@ -820,8 +823,8 @@ bool moveLinearXYZ(float tx, float ty, float tz, uint32_t spd) {
   return true;
 }
 
-void vacuumGrip(uint32_t w) { digitalWrite(RELAY_VACUUM_PUMP, HIGH); delay(w); }
-void vacuumRelease(uint32_t w) { digitalWrite(RELAY_VACUUM_PUMP, LOW); delay(w); }
+void vacuumGrip(uint32_t w) { digitalWrite(RELAY_VACUUM_PUMP, RELAY_ON); delay(w); }
+void vacuumRelease(uint32_t w) { digitalWrite(RELAY_VACUUM_PUMP, RELAY_OFF); delay(w); }
 
 void taskStepper(void* pv) {
   MotionCommand cmd;
@@ -843,7 +846,7 @@ void taskControl(void* pv) {
     // 우선적인 웹 명령 처리
     if (webCmd_EStop) {
       webCmd_EStop = false;
-      digitalWrite(RELAY_VACUUM_PUMP, LOW);
+      digitalWrite(RELAY_VACUUM_PUMP, RELAY_OFF);
       motorsDisable();  // 모터 비활성화 (홀딩토크 OFF, 자유 회전)
       currentState = STATE_IDLE;
       Serial.println("[STATE] E-STOP -> IDLE (motors disabled)");
@@ -879,7 +882,7 @@ void taskControl(void* pv) {
         if (webCmd_StartCycle) {
           webCmd_StartCycle = false;
           // 사이클 진입 전 릴레이 초기화 (테스트 모드에서 수동 ON 했을 수 있음)
-          digitalWrite(RELAY_VACUUM_PUMP, LOW);
+          digitalWrite(RELAY_VACUUM_PUMP, RELAY_OFF);
           currentState = STATE_APPROACH;
         }
         break;
@@ -892,7 +895,7 @@ void taskControl(void* pv) {
 
       case STATE_PICK:
         vacuumGrip(500);
-        if (!moveLinearXYZ(POINT_A_X, POINT_A_Y, POINT_A_Z_ABOVE, 400)) { vacuumRelease(200); currentState = STATE_RETURN; break; }
+        if (!moveLinearXYZ(POINT_A_X, POINT_A_Y, POINT_A_Z_ABOVE, 400)) { digitalWrite(RELAY_VACUUM_PUMP, RELAY_OFF); currentState = STATE_RETURN; break; }
         currentState = STATE_TRANSFER;
         break;
 
@@ -947,7 +950,7 @@ void setupWiFiAndWeb() {
     int sb = (digitalRead(LIMIT_BASE) == LIMIT_BASE_ACTIVE) ? 1 : 0;
     int ss = (digitalRead(LIMIT_SHOULDER) == LIMIT_SHOULDER_ACTIVE) ? 1 : 0;
     int se = (digitalRead(LIMIT_ELBOW) == LIMIT_ELBOW_ACTIVE) ? 1 : 0;
-    int rp = digitalRead(RELAY_VACUUM_PUMP);
+    int rp = (digitalRead(RELAY_VACUUM_PUMP) == RELAY_ON) ? 1 : 0;
     MPU6050_Data md = {0};
     if (xSemaphoreTake(mpuMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
       md = mpu_data;
@@ -980,7 +983,7 @@ void setupWiFiAndWeb() {
       else if(cmd == "tune") webCmd_TuneZVD = true;
       else if(cmd == "estop") {
         webCmd_EStop = true;
-        digitalWrite(RELAY_VACUUM_PUMP, LOW);
+        digitalWrite(RELAY_VACUUM_PUMP, RELAY_OFF);
         Serial.println("[CMD] E-STOP received!");
       }
     }
@@ -1015,7 +1018,7 @@ void setupWiFiAndWeb() {
     if(server.hasArg("target") && server.hasArg("state")) {
       String target = server.arg("target");
       int state = server.arg("state").toInt();
-      if(target == "pump") digitalWrite(RELAY_VACUUM_PUMP, state ? HIGH : LOW);
+      if(target == "pump") digitalWrite(RELAY_VACUUM_PUMP, state ? RELAY_ON : RELAY_OFF);
       else if(target.startsWith("jog_")) {
         int steps = 50;
         if(server.hasArg("steps")) steps = constrain(server.arg("steps").toInt(), 1, 500);
@@ -1086,7 +1089,7 @@ void setup() {
   
   // 모터 활성화 (ENA LOW) 및 릴레이 OFF
   motorsEnable();
-  digitalWrite(RELAY_VACUUM_PUMP, LOW);
+  digitalWrite(RELAY_VACUUM_PUMP, RELAY_OFF);
 
   // 리밋 스위치 자동 감지
   // NC 스위치(Base, Elbow)가 연결되면 평상시 LOW를 보냄 (풀업 + NC = GND 연결)
