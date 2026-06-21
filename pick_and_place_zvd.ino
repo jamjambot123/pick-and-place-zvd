@@ -677,6 +677,13 @@ JointAngles solveIK(float x, float y, float z) {
   return res;
 }
 
+// 현재 관절 스텝으로 엔드이펙터의 Z(높이)만 계산하는 함수 (충돌 회피용)
+float getZFromSteps(int32_t ss, int32_t se) {
+  float sh_rad = (ss / STEPS_PER_DEG_SHOULDER) * PI / 180.0f;
+  float el_rad = (se / STEPS_PER_DEG_ELBOW) * PI / 180.0f;
+  return LOW_SHANK_LENGTH * sinf(sh_rad) + HIGH_SHANK_LENGTH * sinf(sh_rad + el_rad) + BASE_HEIGHT;
+}
+
 // 순운동학: 현재 스텝 → XYZ (관절 조그 후에도 정확한 좌표)
 CartesianPoint solveFK() {
   int32_t sb, ss, se;
@@ -1034,15 +1041,27 @@ void taskControl(void* pv) {
         break;
       }
 
-      // ── 사이클: A위로 이동 ──
+      // ── 사이클: A위로 이동 (최고점 경유) ──
       case STATE_MOVE_TO_A: {
-        Serial.printf("[CYCLE] → A위 (steps: %d,%d,%d)\n",
-          (int)pointA_up.steps_base, (int)pointA_up.steps_shoulder, (int)pointA_up.steps_elbow);
-        MotionCommand cmd = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, motionSpeedUs, activeProfile, false};
-        if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
-          xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+        Serial.printf("[CYCLE] → A위 (최고점 경유)\n");
+        float curZ = getZFromSteps(currentSteps_shoulder, currentSteps_elbow);
+        float destZ = getZFromSteps(pointA_up.steps_shoulder, pointA_up.steps_elbow);
+        if (destZ > curZ) {
+          // 목적지가 더 높음: 제자리 상승 후 수평 회전
+          MotionCommand cmd1 = {currentSteps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, activeProfile, false};
+          if (xQueueSend(motionQueue, &cmd1, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+          delay(100);
+          MotionCommand cmd2 = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, motionSpeedUs, activeProfile, false};
+          if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+        } else {
+          // 현재가 더 높음: 높은 층에서 수평 회전 후 목적지로 하강
+          MotionCommand cmd1 = {pointA_up.steps_base, currentSteps_shoulder, currentSteps_elbow, motionSpeedUs, activeProfile, false};
+          if (xQueueSend(motionQueue, &cmd1, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+          delay(100);
+          MotionCommand cmd2 = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, activeProfile, false};
+          if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
-        delay(200);
+        delay(100);
         currentState = STATE_PICK;
         break;
       }
@@ -1078,22 +1097,27 @@ void taskControl(void* pv) {
         break;
       }
 
-      // ── B위로 이동 (높이 맞춤 → 수평 이동) ──
+      // ── B위로 이동 (최고점 경유) ──
       case STATE_MOVE_TO_B: {
-        Serial.printf("[CYCLE] → B위 (steps: %d,%d,%d)\n",
-          (int)pointB_up.steps_base, (int)pointB_up.steps_shoulder, (int)pointB_up.steps_elbow);
-        // 1) 현재 베이스에서 B위 높이로 먼저 조절 (수평이동 중 높이 변화 방지)
-        MotionCommand cmd1 = {currentSteps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, vertSpeedUs, activeProfile, false};
-        if (xQueueSend(motionQueue, &cmd1, pdMS_TO_TICKS(1000)) == pdTRUE) {
-          xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+        Serial.printf("[CYCLE] → B위 (최고점 경유)\n");
+        float curZ = getZFromSteps(currentSteps_shoulder, currentSteps_elbow);
+        float destZ = getZFromSteps(pointB_up.steps_shoulder, pointB_up.steps_elbow);
+        if (destZ > curZ) {
+          // 목적지가 더 높음: 제자리 상승 후 수평 회전
+          MotionCommand cmd1 = {currentSteps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, vertSpeedUs, activeProfile, false};
+          if (xQueueSend(motionQueue, &cmd1, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+          delay(100);
+          MotionCommand cmd2 = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, motionSpeedUs, activeProfile, false};
+          if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+        } else {
+          // 현재가 더 높음: 높은 층에서 수평 회전 후 목적지로 하강
+          MotionCommand cmd1 = {pointB_up.steps_base, currentSteps_shoulder, currentSteps_elbow, motionSpeedUs, activeProfile, false};
+          if (xQueueSend(motionQueue, &cmd1, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+          delay(100);
+          MotionCommand cmd2 = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, vertSpeedUs, activeProfile, false};
+          if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
         delay(100);
-        // 2) 높이 유지한 채 베이스 회전
-        MotionCommand cmd2 = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, motionSpeedUs, activeProfile, false};
-        if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) {
-          xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
-        }
-        delay(200);
         currentState = STATE_DESCEND_B;
         break;
       }
@@ -1158,21 +1182,27 @@ void taskControl(void* pv) {
         break;
       }
 
-      // ── A위로 복귀 (높이 맞춤 → 수평 이동) ──
+      // ── A위로 복귀 (최고점 경유) ──
       case STATE_RETURN_A: {
-        Serial.println("[CYCLE] →A위(복귀)");
-        // 1) 현재 베이스에서 A위 높이로 먼저 조절
-        MotionCommand cmd1 = {currentSteps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, activeProfile, false};
-        if (xQueueSend(motionQueue, &cmd1, pdMS_TO_TICKS(1000)) == pdTRUE) {
-          xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+        Serial.println("[CYCLE] →A위 복귀 (최고점 경유)");
+        float curZ = getZFromSteps(currentSteps_shoulder, currentSteps_elbow);
+        float destZ = getZFromSteps(pointA_up.steps_shoulder, pointA_up.steps_elbow);
+        if (destZ > curZ) {
+          // 목적지가 더 높음
+          MotionCommand cmd1 = {currentSteps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, activeProfile, false};
+          if (xQueueSend(motionQueue, &cmd1, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+          delay(100);
+          MotionCommand cmd2 = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, motionSpeedUs, activeProfile, false};
+          if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+        } else {
+          // 현재가 더 높음
+          MotionCommand cmd1 = {pointA_up.steps_base, currentSteps_shoulder, currentSteps_elbow, motionSpeedUs, activeProfile, false};
+          if (xQueueSend(motionQueue, &cmd1, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+          delay(100);
+          MotionCommand cmd2 = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, activeProfile, false};
+          if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
         delay(100);
-        // 2) 높이 유지한 채 베이스 회전
-        MotionCommand cmd2 = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, motionSpeedUs, activeProfile, false};
-        if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) {
-          xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
-        }
-        delay(200);
         currentState = STATE_DESCEND_A2;
         break;
       }
