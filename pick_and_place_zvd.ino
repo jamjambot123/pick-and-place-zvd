@@ -33,10 +33,13 @@
 
 #define MOTOR1_BASE_STEP      4    // 베이스 회전축 STEP (PUL+)
 #define MOTOR1_BASE_DIR       5    // 베이스 회전축 DIR  (DIR+)
+#define MOTOR1_BASE_ENA       8    // 베이스 ENA  (LOW=활성, HIGH=비활성)
 #define MOTOR2_SHOULDER_STEP  6    // 숄더(하부 암) STEP
 #define MOTOR2_SHOULDER_DIR   7    // 숄더(하부 암) DIR
+#define MOTOR2_SHOULDER_ENA   9    // 숄더 ENA
 #define MOTOR3_ELBOW_STEP     15   // 엘보(상부 암) STEP
 #define MOTOR3_ELBOW_DIR      16   // 엘보(상부 암) DIR
+#define MOTOR3_ELBOW_ENA      10   // 엘보 ENA
 
 #define LIMIT_BASE            1    // 베이스 영점 스위치
 #define LIMIT_SHOULDER        2    // 숄더 영점 스위치
@@ -476,8 +479,22 @@ const char index_html[] PROGMEM = R"rawliteral(
 // ██  섹션 7: 시스템 함수 (MPU, IK, ZVD, 모터, 호밍)
 // ═══════════════════════════════════════════════════════════════════════════
 
-bool hardware_bypassed = true; // 센서/스위치 미연결 테스트 모드 플래그
+bool hardware_bypassed = true;
 bool mpu_connected = false;
+
+// 모터 활성화/비활성화 (TB6600: LOW=활성, HIGH=비활성)
+void motorsEnable() {
+  digitalWrite(MOTOR1_BASE_ENA, LOW);
+  digitalWrite(MOTOR2_SHOULDER_ENA, LOW);
+  digitalWrite(MOTOR3_ELBOW_ENA, LOW);
+  Serial.println("[MOTOR] Enabled (holding torque ON)");
+}
+void motorsDisable() {
+  digitalWrite(MOTOR1_BASE_ENA, HIGH);
+  digitalWrite(MOTOR2_SHOULDER_ENA, HIGH);
+  digitalWrite(MOTOR3_ELBOW_ENA, HIGH);
+  Serial.println("[MOTOR] Disabled (free spin)");
+}
 
 void mpu6050_init() {
   Wire.begin(MPU6050_SDA, MPU6050_SCL, 400000);
@@ -796,10 +813,15 @@ void taskControl(void* pv) {
     if (webCmd_EStop) {
       webCmd_EStop = false;
       digitalWrite(RELAY_VACUUM_PUMP, LOW);
+      motorsDisable();  // 모터 비활성화 (홀딩토크 OFF, 자유 회전)
       currentState = STATE_IDLE;
-      Serial.println("[STATE] E-STOP -> IDLE");
+      Serial.println("[STATE] E-STOP -> IDLE (motors disabled)");
     }
-    if (webCmd_Rehome) { webCmd_Rehome = false; currentState = STATE_HOMING; }
+    if (webCmd_Rehome) {
+      webCmd_Rehome = false;
+      motorsEnable();  // 호밍 전 모터 재활성화
+      currentState = STATE_HOMING;
+    }
     if (webCmd_TuneZVD) { webCmd_TuneZVD = false; estimateVibrationParams(); }
 
     switch (currentState) {
@@ -1015,13 +1037,14 @@ void setup() {
   mpu6050_init();
 
   // 2. 핀 모드 초기화 (센서 연결 여부와 관계없이 스위치 풀업을 위해 항상 실행!)
-  pinMode(MOTOR1_BASE_STEP, OUTPUT); pinMode(MOTOR1_BASE_DIR, OUTPUT);
-  pinMode(MOTOR2_SHOULDER_STEP, OUTPUT); pinMode(MOTOR2_SHOULDER_DIR, OUTPUT);
-  pinMode(MOTOR3_ELBOW_STEP, OUTPUT); pinMode(MOTOR3_ELBOW_DIR, OUTPUT);
+  pinMode(MOTOR1_BASE_STEP, OUTPUT); pinMode(MOTOR1_BASE_DIR, OUTPUT); pinMode(MOTOR1_BASE_ENA, OUTPUT);
+  pinMode(MOTOR2_SHOULDER_STEP, OUTPUT); pinMode(MOTOR2_SHOULDER_DIR, OUTPUT); pinMode(MOTOR2_SHOULDER_ENA, OUTPUT);
+  pinMode(MOTOR3_ELBOW_STEP, OUTPUT); pinMode(MOTOR3_ELBOW_DIR, OUTPUT); pinMode(MOTOR3_ELBOW_ENA, OUTPUT);
   pinMode(LIMIT_BASE, INPUT_PULLUP); pinMode(LIMIT_SHOULDER, INPUT_PULLUP); pinMode(LIMIT_ELBOW, INPUT_PULLUP);
   pinMode(RELAY_VACUUM_PUMP, OUTPUT);
   
-  // 릴레이 초기값은 LOW (OFF)
+  // 모터 활성화 (ENA LOW) 및 릴레이 OFF
+  motorsEnable();
   digitalWrite(RELAY_VACUUM_PUMP, LOW);
 
   // 리밋 스위치 자동 감지
