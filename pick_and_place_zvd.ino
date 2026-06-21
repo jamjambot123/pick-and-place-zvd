@@ -90,9 +90,9 @@
 #define HOMING_APPROACH_SPEED_US  1600  // 2차 접근은 더 느리게 (정밀도)
 
 // 호밍 방향 (LOW/HIGH = DIR 핀 레벨, 스위치 쪽으로 가는 방향)
-#define HOMING_DIR_BASE       LOW
-#define HOMING_DIR_SHOULDER   LOW
-#define HOMING_DIR_ELBOW      LOW
+#define HOMING_DIR_BASE       HIGH
+#define HOMING_DIR_SHOULDER   HIGH
+#define HOMING_DIR_ELBOW      HIGH
 
 // 호밍 후 초기 위치까지 이동할 스텝 (레퍼런스: X_HOME_STEPS 등)
 #define HOME_OFFSET_BASE      0
@@ -657,7 +657,8 @@ void executeMotion(int32_t tb, int32_t ts, int32_t te, uint32_t base_ival) {
   // 베이스 모터가 움직여야 할 때만 일시적으로 켬 (HIGH=활성)
   if (db != 0) { digitalWrite(MOTOR1_BASE_ENA, HIGH); delayMicroseconds(50); }
   int8_t dirb = (db >= 0) ? 1 : -1, dirs = (ds >= 0) ? 1 : -1, dire = (de >= 0) ? 1 : -1;
-  digitalWrite(MOTOR1_BASE_DIR, dirb > 0); digitalWrite(MOTOR2_SHOULDER_DIR, dirs > 0); digitalWrite(MOTOR3_ELBOW_DIR, dire > 0);
+  // Common Anode로 인해 DIR 논리가 반전됨 (<= 0 이면 정방향)
+  digitalWrite(MOTOR1_BASE_DIR, dirb <= 0); digitalWrite(MOTOR2_SHOULDER_DIR, dirs <= 0); digitalWrite(MOTOR3_ELBOW_DIR, dire <= 0);
   delayMicroseconds(5);
   int32_t ab = abs(db), as = abs(ds), ae = abs(de);
   int32_t ms = max(ab, max(as, ae));
@@ -1037,7 +1038,8 @@ void setupWiFiAndWeb() {
         if (target == "jog_base") { digitalWrite(MOTOR1_BASE_ENA, HIGH); delayMicroseconds(50); }
         
         int dir = (state > 0) ? 1 : -1;
-        digitalWrite(pinDir, state > 0 ? HIGH : LOW);
+        // Common Anode로 인해 DIR 논리 반전 (state > 0 이면 LOW)
+        digitalWrite(pinDir, state > 0 ? LOW : HIGH);
         delayMicroseconds(5);
         for(int i = 0; i < steps; i++) {
           stepPulse(pinStep);
