@@ -235,14 +235,13 @@ enum PickPlaceState {
   STATE_RETURN_A,     // A위로 이동
   STATE_DESCEND_A2,   // A아래로 (놓기)
   STATE_PLACE_A,      // 진공 해제
-  STATE_ASCEND_A2,    // A위로 → 1사이클 완료
-  STATE_RETURN_HOME   // 사이클 종료 후 호밍 안전 구역(0,0,0) 복귀
+  STATE_ASCEND_A2     // A위로 → 1사이클 완료
 };
 
 volatile PickPlaceState currentState = STATE_IDLE;
 String stateStrings[] = {"Homing...", "IDLE",
   "→A↑", "A↓", "Pick", "A↑", "→B↑", "B↓", "Place", "B↑",
-  "B↓₂", "PickB", "B↑₂", "→A↑", "A↓₂", "PlaceA", "A↑₂", "→Home"};
+  "B↓₂", "PickB", "B↑₂", "→A↑", "A↓₂", "PlaceA", "A↑₂"};
 
 volatile float last_vib_scurve = 0.0f;
 volatile float last_vib_zvd = 0.0f;
@@ -932,15 +931,16 @@ bool homeSingleAxis(int pinStep, int pinDir, int pinLim, int activeLevel, int ho
 }
 
 bool homeAllAxes() {
-  // 호밍 순서: 숄더(몸체쪽) → 엘보우(끝단쪽) → 베이스 (원작 homeSequence와 동일)
-  bool ok = homeSingleAxis(MOTOR2_SHOULDER_STEP, MOTOR2_SHOULDER_DIR, LIMIT_SHOULDER,
-              LIMIT_SHOULDER_ACTIVE, HOMING_DIR_SHOULDER, HOME_OFFSET_SHOULDER,
-              HOME_INITIAL_DEG_SHOULDER, STEPS_PER_DEG_SHOULDER,
-              currentSteps_shoulder, "Shoulder") &&
-            homeSingleAxis(MOTOR3_ELBOW_STEP, MOTOR3_ELBOW_DIR, LIMIT_ELBOW,
+  // 호밍 순서: 엘보우(팔 접기) → 숄더(팔 들기) → 베이스 (회전)
+  // 이렇게 순서를 바꿔야 허공(A_up)에서 호밍을 시작해도 바닥에 긁히지 않습니다.
+  bool ok = homeSingleAxis(MOTOR3_ELBOW_STEP, MOTOR3_ELBOW_DIR, LIMIT_ELBOW,
               LIMIT_ELBOW_ACTIVE, HOMING_DIR_ELBOW, HOME_OFFSET_ELBOW,
               HOME_INITIAL_DEG_ELBOW, STEPS_PER_DEG_ELBOW,
               currentSteps_elbow, "Elbow") &&
+            homeSingleAxis(MOTOR2_SHOULDER_STEP, MOTOR2_SHOULDER_DIR, LIMIT_SHOULDER,
+              LIMIT_SHOULDER_ACTIVE, HOMING_DIR_SHOULDER, HOME_OFFSET_SHOULDER,
+              HOME_INITIAL_DEG_SHOULDER, STEPS_PER_DEG_SHOULDER,
+              currentSteps_shoulder, "Shoulder") &&
             homeSingleAxis(MOTOR1_BASE_STEP, MOTOR1_BASE_DIR, LIMIT_BASE,
               LIMIT_BASE_ACTIVE, HOMING_DIR_BASE, HOME_OFFSET_BASE,
               HOME_INITIAL_DEG_BASE, STEPS_PER_DEG_BASE,
@@ -1256,29 +1256,12 @@ void taskControl(void* pv) {
         Serial.printf("[CYCLE] 사이클 %d/%d회 완료!\n", (int)cycleCount, (int)targetCycleCount);
         
         if (webCmd_StopCycle || cycleCount >= targetCycleCount) {
-          Serial.println("[CYCLE] 지정 횟수 도달 또는 정지 명령 수신 -> 안전 호밍 위치로 이동");
-          currentState = STATE_RETURN_HOME; // 지정 횟수 도달 시 IDLE이 아닌 안전 복귀
+          Serial.println("[CYCLE] 지정 횟수 도달 또는 정지 명령 수신 -> IDLE (A_up 위치에서 대기)");
+          currentState = STATE_IDLE; // 지정 횟수 도달 시 그대로 안전하게 A_up에서 대기
         } else {
           Serial.println("[CYCLE] 다음 횟수 이송을 위해 하강합니다.");
           currentState = STATE_DESCEND_A; // 목표 횟수 미달 시 다시 집기 시작
         }
-        break;
-      }
-
-      // ── 사이클 종료 시 안전 호밍 위치(0,0,0) 복귀 ──
-      case STATE_RETURN_HOME: {
-        Serial.println("[CYCLE] 사이클 완전 종료. 안전 호밍 대기 위치(0,0,0)로 복귀합니다.");
-        
-        // 1. Z축을 높게 유지한 채 Base를 0으로 먼저 회전 (충돌 방지)
-        executeBaseMoveWithOvershoot(0, currentSteps_shoulder, currentSteps_elbow, motionSpeedUs);
-        delay(100);
-        
-        // 2. 어깨와 팔꿈치를 0,0 (최초 자세)으로 완전히 접기
-        MotionCommand cmd2 = {0, 0, 0, vertSpeedUs, PROFILE_SCURVE, false};
-        if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
-        
-        Serial.println("[CYCLE] 복귀 완료. 이제 호밍을 수행해도 안전합니다 -> IDLE");
-        currentState = STATE_IDLE;
         break;
       }
     }
