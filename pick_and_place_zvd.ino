@@ -1066,6 +1066,8 @@ void taskControl(void* pv) {
     }
     if (webCmd_Rehome) {
       webCmd_Rehome = false;
+      xQueueReset(motionQueue);
+      xSemaphoreTake(motionDoneSem, 0);
       motorsEnable();  // 호밍 전 모터 재활성화
       currentState = STATE_HOMING;
     }
@@ -1125,6 +1127,11 @@ void taskControl(void* pv) {
             digitalWrite(RELAY_VACUUM_PUMP, RELAY_OFF);
             cycleCount = 0;
             webCmd_StopCycle = false;
+            
+            // 핵심 수정: 사이클 시작 전 큐와 남아있는 세마포어를 완벽히 비움 (GoTo 등 비동기 명령으로 인한 동기화 꼬임 방지)
+            xQueueReset(motionQueue);
+            xSemaphoreTake(motionDoneSem, 0);
+
             currentState = STATE_MOVE_TO_A;
             webCmd_ContinuousCycle = false; // 시작 트리거 해제
             Serial.printf("[CYCLE] %d회 반복 사이클 시작!\n", (int)targetCycleCount);
