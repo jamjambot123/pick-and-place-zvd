@@ -150,6 +150,8 @@ volatile bool webCmd_SaveBU = false;
 volatile bool webCmd_SaveBD = false;
 volatile bool webCmd_ContinuousCycle = false;
 volatile int32_t cycleCount = 0;
+volatile int32_t targetCycleCount = 1;
+volatile bool webCmd_StopCycle = false;
 uint32_t gripDelayMs = 1500;    // 흡착 대기 (ms)
 uint32_t releaseDelayMs = 500;  // 해제 대기 (ms)
 uint32_t motionSpeedUs = 1500;  // 수평 이동 속도 (us)
@@ -181,6 +183,7 @@ void saveTeachPoints() {
   prefs.putULong("spd", motionSpeedUs);
   prefs.putULong("vspd", vertSpeedUs);
   prefs.putUChar("prof", activeProfile);
+  prefs.putInt("cycles", targetCycleCount);
   prefs.end();
   Serial.println("[FLASH] 티칭 데이터 저장 완료");
 }
@@ -193,6 +196,7 @@ void loadTeachPoints() {
   motionSpeedUs = prefs.getULong("spd", 1500);
   vertSpeedUs = prefs.getULong("vspd", 2000);
   activeProfile = prefs.getUChar("prof", PROFILE_SCURVE);
+  targetCycleCount = prefs.getInt("cycles", 1);
   prefs.end();
   Serial.printf("[FLASH] 로드: A위=%s A아래=%s B위=%s B아래=%s spd=%d grip=%d rel=%d\n",
     pointA_up.saved?"OK":"X", pointA_down.saved?"OK":"X",
@@ -432,9 +436,13 @@ const char index_html[] PROGMEM = R"rawliteral(
         <div class="data-row" style="margin-bottom:4px;"><span>상하속도(us)</span><input type="number" id="vspdUs" class="jog-input" value="2000" min="500" max="5000" style="width:70px;"></div>
         <div class="data-row" style="margin-bottom:4px;"><span>흡착 대기(ms)</span><input type="number" id="gripMs" class="jog-input" value="1500" min="200" max="5000" style="width:70px;"></div>
         <div class="data-row" style="margin-bottom:4px;"><span>해제 대기(ms)</span><input type="number" id="relMs" class="jog-input" value="500" min="100" max="5000" style="width:70px;"></div>
+        <div class="data-row" style="margin-bottom:4px;"><span>목표 반복횟수</span><input type="number" id="targetCycles" class="jog-input" value="1" min="1" max="999" style="width:70px;"></div>
         <button class="btn btn-secondary" style="padding:6px;width:100%;" onclick="setTiming()">💾 적용 & 저장</button>
       </div>
-      <button class="btn btn-danger" style="width:100%;" onclick="sendCommand('startCycle')">🔄 단일 사이클 시작 (1회 이송)</button>
+      <div style="display:flex;gap:4px;">
+        <button class="btn btn-danger" style="flex:1;" onclick="sendCommand('startCycle')">▶ 지정 횟수 시작</button>
+        <button class="btn btn-secondary" style="flex:1;" onclick="sendCommand('stopCycle')">⏹ 자연 정지</button>
+      </div>
     </div>
   </div>
 
@@ -517,11 +525,12 @@ const char index_html[] PROGMEM = R"rawliteral(
             if(el) { const ok = data['pt'+k]; el.querySelector('.data-val').innerHTML = ok ? '✅' : '❌'; el.querySelector('.data-val').style.color = ok ? '#10b981' : '#f43f5e'; }
           });
           const cycInfo = document.getElementById('cycleInfo');
-          if(cycInfo) cycInfo.innerHTML = '<span>사이클 횟수</span><span class="data-val">'+data.cycles+'</span>';
+          if(cycInfo) cycInfo.innerHTML = '<span>사이클 횟수</span><span class="data-val">'+data.cycles+' / '+data.cycles_target+'</span>';
           if(initInputs && data.spd_us) document.getElementById('spdUs').value = data.spd_us;
           if(initInputs && data.vspd_us) document.getElementById('vspdUs').value = data.vspd_us;
           if(initInputs && data.grip_ms) document.getElementById('gripMs').value = data.grip_ms;
           if(initInputs && data.rel_ms) document.getElementById('relMs').value = data.rel_ms;
+          if(initInputs && data.cycles_target) document.getElementById('targetCycles').value = data.cycles_target;
           if(initInputs && data.prof !== undefined) document.getElementById('profSel').value = data.prof;
         }).catch(err => console.error(err));
     }
@@ -534,8 +543,9 @@ const char index_html[] PROGMEM = R"rawliteral(
       const v = document.getElementById('vspdUs').value || 2000;
       const g = document.getElementById('gripMs').value || 1500;
       const r = document.getElementById('relMs').value || 500;
+      const c = document.getElementById('targetCycles').value || 1;
       const pn = ['\uc0ac\ub2e4\ub9ac\uaf34','S-curve','ZVD'][p];
-      fetch('/api/command?c=timing&prof='+p+'&spd='+s+'&vspd='+v+'&grip='+g+'&rel='+r, { method:'POST' }).then(res => { if(res.ok) alert(pn+' / \uc218\ud3c9:'+s+'us \uc0c1\ud558:'+v+'us \uc800\uc7a5\ub428'); });
+      fetch('/api/command?c=timing&prof='+p+'&spd='+s+'&vspd='+v+'&grip='+g+'&rel='+r+'&cycles='+c, { method:'POST' }).then(res => { if(res.ok) alert(pn+' / \uc218\ud3c9:'+s+'us \uc0c1\ud558:'+v+'us \uc800\uc7a5\ub428'); });
     }
 
     function testCmd(target, state) {
@@ -1057,9 +1067,10 @@ void taskControl(void* pv) {
           } else {
             digitalWrite(RELAY_VACUUM_PUMP, RELAY_OFF);
             cycleCount = 0;
+            webCmd_StopCycle = false;
             currentState = STATE_MOVE_TO_A;
-            webCmd_ContinuousCycle = false; // 플래그 즉시 해제 (단일 사이클)
-            Serial.println("[CYCLE] 단일 사이클(1회 이송) 시작!");
+            webCmd_ContinuousCycle = false; // 시작 트리거 해제
+            Serial.printf("[CYCLE] %d회 반복 사이클 시작!\n", (int)targetCycleCount);
           }
         }
         break;
@@ -1190,8 +1201,15 @@ void taskControl(void* pv) {
         delay(500);
         
         cycleCount++;
-        Serial.printf("[CYCLE] 단일 사이클 %d회 완료!\n", (int)cycleCount);
-        currentState = STATE_IDLE; // 단일 사이클 완료 후 정지
+        Serial.printf("[CYCLE] 사이클 %d/%d회 완료!\n", (int)cycleCount, (int)targetCycleCount);
+        
+        if (webCmd_StopCycle || cycleCount >= targetCycleCount) {
+          Serial.println("[CYCLE] 지정 횟수 도달 또는 정지 명령 수신 -> IDLE");
+          currentState = STATE_IDLE; // 지정 횟수 도달 또는 자연정지 요청 시 정지
+        } else {
+          Serial.println("[CYCLE] 다음 횟수 이송을 위해 하강합니다.");
+          currentState = STATE_DESCEND_A; // 목표 횟수 미달 시 다시 집기 시작
+        }
         break;
       }
     }
@@ -1260,6 +1278,7 @@ void setupWiFiAndWeb() {
     if(server.hasArg("c")){
       String cmd = server.arg("c");
       if(cmd == "startCycle") webCmd_ContinuousCycle = true;
+      else if(cmd == "stopCycle") webCmd_StopCycle = true;
       else if(cmd == "saveAU") webCmd_SaveAU = true;
       else if(cmd == "saveAD") webCmd_SaveAD = true;
       else if(cmd == "saveBU") webCmd_SaveBU = true;
@@ -1286,15 +1305,17 @@ void setupWiFiAndWeb() {
         if (server.hasArg("vspd")) vertSpeedUs = constrain(server.arg("vspd").toInt(), 500, 5000);
         if (server.hasArg("grip")) gripDelayMs = constrain(server.arg("grip").toInt(), 200, 5000);
         if (server.hasArg("rel")) releaseDelayMs = constrain(server.arg("rel").toInt(), 100, 5000);
+        if (server.hasArg("cycles")) targetCycleCount = constrain(server.arg("cycles").toInt(), 1, 9999);
         prefs.begin("teach", false);
         prefs.putUChar("prof", activeProfile);
         prefs.putULong("spd", motionSpeedUs);
         prefs.putULong("vspd", vertSpeedUs);
         prefs.putULong("grip", gripDelayMs);
         prefs.putULong("rel", releaseDelayMs);
+        prefs.putInt("cycles", targetCycleCount);
         prefs.end();
         const char* pnames[] = {"Trapezoid","S-curve","ZVD"};
-        Serial.printf("[CONFIG] prof=%s spd=%d vspd=%d grip=%d rel=%d (saved)\n", pnames[activeProfile], (int)motionSpeedUs, (int)vertSpeedUs, (int)gripDelayMs, (int)releaseDelayMs);
+        Serial.printf("[CONFIG] prof=%s spd=%d vspd=%d grip=%d rel=%d cycles=%d (saved)\n", pnames[activeProfile], (int)motionSpeedUs, (int)vertSpeedUs, (int)gripDelayMs, (int)releaseDelayMs, (int)targetCycleCount);
       }
       else if(cmd == "estop") {
         webCmd_EStop = true;
