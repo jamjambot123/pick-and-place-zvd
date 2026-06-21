@@ -149,6 +149,8 @@ volatile bool webCmd_SaveBU = false;
 volatile bool webCmd_SaveBD = false;
 volatile bool webCmd_ContinuousCycle = false;
 volatile int32_t cycleCount = 0;
+uint32_t gripDelayMs = 1500;    // 흡착 대기 (ms)
+uint32_t releaseDelayMs = 500;  // 해제 대기 (ms)
 
 Preferences prefs;
 
@@ -408,6 +410,12 @@ const char index_html[] PROGMEM = R"rawliteral(
       </div>
       
       <div id="cycleInfo" class="data-row" style="margin-bottom:10px;"><span>사이클 횟수</span><span class="data-val">0</span></div>
+      <div style="margin-bottom:15px;">
+        <h3 style="color:var(--text-dim); margin:0 0 8px; font-size:1rem;">⚙ 타이밍 설정</h3>
+        <div class="data-row" style="margin-bottom:4px;"><span>흡착 대기(ms)</span><input type="number" id="gripMs" class="jog-input" value="1500" min="200" max="5000" style="width:70px;"></div>
+        <div class="data-row" style="margin-bottom:4px;"><span>해제 대기(ms)</span><input type="number" id="relMs" class="jog-input" value="500" min="100" max="5000" style="width:70px;"></div>
+        <button class="btn btn-secondary" style="padding:6px;width:100%;" onclick="setTiming()">적용</button>
+      </div>
       <button class="btn btn-danger" style="width:100%;" onclick="sendCommand('startCycle')">🔄 무한 반복 사이클 시작</button>
     </div>
   </div>
@@ -518,6 +526,11 @@ const char index_html[] PROGMEM = R"rawliteral(
     }
     function sendCommand(cmd) {
       fetch('/api/command?c=' + cmd, { method: 'POST' }).then(res => { if(res.ok) updateStatus(); });
+    }
+    function setTiming() {
+      const g = document.getElementById('gripMs').value || 1500;
+      const r = document.getElementById('relMs').value || 500;
+      fetch('/api/command?c=timing&grip='+g+'&rel='+r, { method:'POST' }).then(res => { if(res.ok) alert('흡착:'+g+'ms / 해제:'+r+'ms 적용'); });
     }
 
     function testCmd(target, state) {
@@ -1019,7 +1032,7 @@ void taskControl(void* pv) {
 
       // ── 진공 흡착 ──
       case STATE_PICK:
-        vacuumGrip(500);
+        vacuumGrip(gripDelayMs);
         currentState = STATE_ASCEND_A;
         break;
 
@@ -1061,7 +1074,7 @@ void taskControl(void* pv) {
 
       // ── 진공 해제 ──
       case STATE_PLACE:
-        vacuumRelease(200);
+        vacuumRelease(releaseDelayMs);
         currentState = STATE_ASCEND_B;
         break;
 
@@ -1091,7 +1104,7 @@ void taskControl(void* pv) {
       }
 
       case STATE_PICK_B:
-        vacuumGrip(500);
+        vacuumGrip(gripDelayMs);
         currentState = STATE_ASCEND_B2;
         break;
 
@@ -1130,7 +1143,7 @@ void taskControl(void* pv) {
       }
 
       case STATE_PLACE_A:
-        vacuumRelease(200);
+        vacuumRelease(releaseDelayMs);
         currentState = STATE_ASCEND_A2;
         break;
 
@@ -1221,6 +1234,11 @@ void setupWiFiAndWeb() {
       else if(cmd == "saveBD") webCmd_SaveBD = true;
       else if(cmd == "rehome") webCmd_Rehome = true;
       else if(cmd == "tune") webCmd_TuneZVD = true;
+      else if(cmd == "timing") {
+        if (server.hasArg("grip")) gripDelayMs = constrain(server.arg("grip").toInt(), 200, 5000);
+        if (server.hasArg("rel")) releaseDelayMs = constrain(server.arg("rel").toInt(), 100, 5000);
+        Serial.printf("[CONFIG] grip=%dms release=%dms\n", (int)gripDelayMs, (int)releaseDelayMs);
+      }
       else if(cmd == "estop") {
         webCmd_EStop = true;
         webCmd_ContinuousCycle = false;  // 사이클 중단
