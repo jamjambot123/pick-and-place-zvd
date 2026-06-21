@@ -51,9 +51,9 @@
 #define LIMIT_ELBOW_ACTIVE    HIGH
 
 #define RELAY_VACUUM_PUMP     21   // 진공 펌프 릴레이 제어 핀
-// 릴레이 작동 로직 (High-Level Trigger: HIGH=켜짐, LOW=꺼짐)
-#define RELAY_ON              HIGH
-#define RELAY_OFF             LOW
+// 릴레이 작동 로직 (Low-Level Trigger: LOW=켜짐, HIGH=오픈드레인 꺼짐)
+#define RELAY_ON              LOW
+#define RELAY_OFF             HIGH
 
 #define MPU6050_SDA           17   // I2C 데이터 라인
 #define MPU6050_SCL           18   // I2C 클럭 라인
@@ -368,7 +368,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       <tr class="cat-s"><td>Base Limit</td><td>1</td><td>리밋 스위치</td><td>NC (HIGH=눌림)</td></tr>
       <tr class="cat-s"><td>Shoulder Limit</td><td>2</td><td>리밋 스위치</td><td>NO (LOW=눌림)</td></tr>
       <tr class="cat-s"><td>Elbow Limit</td><td>47</td><td>리밋 스위치</td><td>NC (HIGH=눌림)</td></tr>
-      <tr class="cat-r"><td>Vacuum Pump</td><td>21</td><td>릴레이 #1 IN</td><td>HIGH=가동</td></tr>
+      <tr class="cat-r"><td>Vacuum Pump</td><td>21</td><td>릴레이 #1 IN</td><td>LOW=가동 (Open-Drain)</td></tr>
       <tr class="cat-i"><td>MPU6050 SDA</td><td>17</td><td>MPU6050</td><td rowspan="2">I2C 3.3V</td></tr>
       <tr class="cat-i"><td>MPU6050 SCL</td><td>18</td><td>MPU6050</td></tr>
     </table>
@@ -1085,7 +1085,8 @@ void setup() {
   pinMode(MOTOR2_SHOULDER_STEP, OUTPUT); pinMode(MOTOR2_SHOULDER_DIR, OUTPUT); pinMode(MOTOR2_SHOULDER_ENA, OUTPUT);
   pinMode(MOTOR3_ELBOW_STEP, OUTPUT); pinMode(MOTOR3_ELBOW_DIR, OUTPUT); pinMode(MOTOR3_ELBOW_ENA, OUTPUT);
   pinMode(LIMIT_BASE, INPUT_PULLUP); pinMode(LIMIT_SHOULDER, INPUT_PULLUP); pinMode(LIMIT_ELBOW, INPUT_PULLUP);
-  pinMode(RELAY_VACUUM_PUMP, OUTPUT);
+  // 5V 릴레이와 3.3V ESP32의 전압 충돌(1.7V 잔류)을 막기 위해 Open-Drain 사용
+  pinMode(RELAY_VACUUM_PUMP, OUTPUT_OPEN_DRAIN);
   
   // 모터 활성화 (ENA LOW) 및 릴레이 OFF
   motorsEnable();
