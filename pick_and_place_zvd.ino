@@ -734,7 +734,9 @@ inline void stepPulse(int pin) {
 
 uint32_t trapezoidalProfile(int32_t cs, int32_t ts, uint32_t baseIval) {
   if (ts <= 0) return baseIval;
-  int32_t as = min((int32_t)ACCEL_STEPS, ts / 3);
+  // 가속 구간을 250ms 기준으로 동적 계산 (속도가 빠를수록 스텝 수 증가)
+  int32_t dyn_accel = (int32_t)(250000.0f / ((MAX_STEP_INTERVAL_US + baseIval) / 2.0f));
+  int32_t as = min(dyn_accel, ts / 3);
   int32_t ds = ts - as;
   float f = (cs < as) ? (float)cs / as : ((cs >= ds) ? (float)(ts - cs) / as : 1.0f);
   f = constrain(f, 0.05f, 1.0f);
@@ -743,7 +745,9 @@ uint32_t trapezoidalProfile(int32_t cs, int32_t ts, uint32_t baseIval) {
 
 uint32_t sCurveProfile(int32_t cs, int32_t ts, uint32_t baseIval) {
   if (ts <= 0) return baseIval;
-  int32_t as = min((int32_t)ACCEL_STEPS, ts / 3);
+  // 가속 구간을 250ms 기준으로 동적 계산 (속도가 빠를수록 스텝 수 증가)
+  int32_t dyn_accel = (int32_t)(250000.0f / ((MAX_STEP_INTERVAL_US + baseIval) / 2.0f));
+  int32_t as = min(dyn_accel, ts / 3);
   int32_t ds = ts - as;
   float f;
   if (cs < as) {
