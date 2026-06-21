@@ -785,10 +785,10 @@ bool homeSingleAxis(int pinStep, int pinDir, int pinLim, int activeLevel, int ho
 }
 
 bool homeAllAxes() {
-  bool ok = homeSingleAxis(MOTOR3_ELBOW_STEP, MOTOR3_ELBOW_DIR, LIMIT_ELBOW,
-              LIMIT_ELBOW_ACTIVE, HOMING_DIR_ELBOW, HOME_OFFSET_ELBOW, currentSteps_elbow, "Elbow") &&
-            homeSingleAxis(MOTOR2_SHOULDER_STEP, MOTOR2_SHOULDER_DIR, LIMIT_SHOULDER,
+  bool ok = homeSingleAxis(MOTOR2_SHOULDER_STEP, MOTOR2_SHOULDER_DIR, LIMIT_SHOULDER,
               LIMIT_SHOULDER_ACTIVE, HOMING_DIR_SHOULDER, HOME_OFFSET_SHOULDER, currentSteps_shoulder, "Shoulder") &&
+            homeSingleAxis(MOTOR3_ELBOW_STEP, MOTOR3_ELBOW_DIR, LIMIT_ELBOW,
+              LIMIT_ELBOW_ACTIVE, HOMING_DIR_ELBOW, HOME_OFFSET_ELBOW, currentSteps_elbow, "Elbow") &&
             homeSingleAxis(MOTOR1_BASE_STEP, MOTOR1_BASE_DIR, LIMIT_BASE,
               LIMIT_BASE_ACTIVE, HOMING_DIR_BASE, HOME_OFFSET_BASE, currentSteps_base, "Base");
   return ok;
