@@ -487,10 +487,10 @@ bool mpu_connected = false;
 
 // 모터 활성화/비활성화 (TB6600: LOW=활성, HIGH=비활성)
 void motorsEnable() {
-  digitalWrite(MOTOR1_BASE_ENA, LOW);
+  digitalWrite(MOTOR1_BASE_ENA, HIGH); // 베이스는 발열 방지를 위해 평소 꺼둠
   digitalWrite(MOTOR2_SHOULDER_ENA, LOW);
   digitalWrite(MOTOR3_ELBOW_ENA, LOW);
-  Serial.println("[MOTOR] Enabled (holding torque ON)");
+  Serial.println("[MOTOR] Enabled (Base OFF for cooling)");
 }
 void motorsDisable() {
   digitalWrite(MOTOR1_BASE_ENA, HIGH);
@@ -646,6 +646,7 @@ uint32_t trapezoidalProfile(int32_t cs, int32_t ts, uint32_t baseIval) {
 
 void executeMotion(int32_t tb, int32_t ts, int32_t te, uint32_t base_ival) {
   int32_t db = tb - currentSteps_base, ds = ts - currentSteps_shoulder, de = te - currentSteps_elbow;
+  if(db != 0) { digitalWrite(MOTOR1_BASE_ENA, LOW); delayMicroseconds(50); }
   int8_t dirb = (db >= 0) ? 1 : -1, dirs = (ds >= 0) ? 1 : -1, dire = (de >= 0) ? 1 : -1;
   digitalWrite(MOTOR1_BASE_DIR, dirb > 0); digitalWrite(MOTOR2_SHOULDER_DIR, dirs > 0); digitalWrite(MOTOR3_ELBOW_DIR, dire > 0);
   delayMicroseconds(5);
@@ -667,6 +668,10 @@ void executeMotion(int32_t tb, int32_t ts, int32_t te, uint32_t base_ival) {
       vTaskDelay(pdMS_TO_TICKS(1));
     }
   }
+
+  // 이동 끝나면 베이스 모터 끄기 (발열 방지)
+  if (db != 0) digitalWrite(MOTOR1_BASE_ENA, HIGH);
+
   currentSteps_base = tb; currentSteps_shoulder = ts; currentSteps_elbow = te;
   motionComplete = true;
 }
@@ -701,6 +706,7 @@ bool homeSingleAxis(int pinStep, int pinDir, int pinLim, int activeLevel, int ho
     Serial.printf("[HOME] %s bypassed\n", name);
     return true;
   }
+  if (pinStep == MOTOR1_BASE_STEP) { digitalWrite(MOTOR1_BASE_ENA, LOW); delayMicroseconds(50); }
   int backDir = homingDir == LOW ? HIGH : LOW;
   int32_t maxS = STEPS_PER_REV * MICROSTEPS * GEAR_RATIO_BASE * 2;
 
@@ -714,7 +720,9 @@ bool homeSingleAxis(int pinStep, int pinDir, int pinLim, int activeLevel, int ho
       stepPulse(pinStep); vTaskDelay(pdMS_TO_TICKS(1)); // 1ms 휴식으로 Watchdog 방지
     }
     if (digitalRead(pinLim) == activeLevel) {
-      Serial.printf("[HOME] %s backoff FAIL\n", name); return false;
+      Serial.printf("[HOME] %s backoff FAIL\n", name); 
+      if (pinStep == MOTOR1_BASE_STEP) digitalWrite(MOTOR1_BASE_ENA, HIGH);
+      return false;
     }
     delay(HOME_DWELL_MS);
   }
@@ -725,11 +733,19 @@ bool homeSingleAxis(int pinStep, int pinDir, int pinLim, int activeLevel, int ho
   bool found = false;
   for (int32_t i = 0; i < maxS; i++) {
     server.handleClient();
-    if (webCmd_EStop) { Serial.println("[HOME] E-STOP!"); return false; }
+    if (webCmd_EStop) { 
+      Serial.println("[HOME] E-STOP!"); 
+      if (pinStep == MOTOR1_BASE_STEP) digitalWrite(MOTOR1_BASE_ENA, HIGH);
+      return false; 
+    }
     if (digitalRead(pinLim) == activeLevel) { found = true; break; }
     stepPulse(pinStep); vTaskDelay(pdMS_TO_TICKS(1));
   }
-  if (!found) { Serial.printf("[HOME] %s approach FAIL\n", name); return false; }
+  if (!found) { 
+    Serial.printf("[HOME] %s approach FAIL\n", name); 
+    if (pinStep == MOTOR1_BASE_STEP) digitalWrite(MOTOR1_BASE_ENA, HIGH);
+    return false; 
+  }
 
   // 3단계: 살짝 빠져나가서 정밀 재접근
   delay(HOME_DWELL_MS);
@@ -758,6 +774,7 @@ bool homeSingleAxis(int pinStep, int pinDir, int pinLim, int activeLevel, int ho
     ctr = homeOffset;
   }
   delay(HOME_DWELL_MS);
+  if (pinStep == MOTOR1_BASE_STEP) digitalWrite(MOTOR1_BASE_ENA, HIGH);
   Serial.printf("[HOME] %s OK (offset=%d)\n", name, homeOffset);
   return true;
 }
@@ -1008,6 +1025,9 @@ void setupWiFiAndWeb() {
         else if(target == "jog_shoulder") { pinStep = MOTOR2_SHOULDER_STEP; pinDir = MOTOR2_SHOULDER_DIR; stepCounter = &currentSteps_shoulder; }
         else if(target == "jog_elbow")    { pinStep = MOTOR3_ELBOW_STEP; pinDir = MOTOR3_ELBOW_DIR; stepCounter = &currentSteps_elbow; }
         else { server.send(400, "text/plain", "BAD"); return; }
+        
+        if (target == "jog_base") { digitalWrite(MOTOR1_BASE_ENA, LOW); delayMicroseconds(50); }
+        
         int dir = (state > 0) ? 1 : -1;
         digitalWrite(pinDir, state > 0 ? HIGH : LOW);
         delayMicroseconds(5);
@@ -1016,6 +1036,9 @@ void setupWiFiAndWeb() {
           stepPulse(pinStep);
           vTaskDelay(pdMS_TO_TICKS(1));
         }
+        
+        if (target == "jog_base") digitalWrite(MOTOR1_BASE_ENA, HIGH);
+
         // 스텝 카운터 업데이트 (FK 좌표 동기화)
         portENTER_CRITICAL(&stepsMux);
         *stepCounter += dir * steps;
