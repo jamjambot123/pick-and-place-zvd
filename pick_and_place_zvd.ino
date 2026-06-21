@@ -110,7 +110,7 @@
 #define ACCEL_STEPS           80
 
 // 안전 제한
-#define Z_MIN_SAFE            15.0f   // Z축 하한 (mm) - 바닥/베이스 충돌 방지
+#define Z_MIN_SAFE            0.0f    // Z축 하한 (mm) - 0으로 설정 (하강 제한 없음)
 #define CARTESIAN_INTERP_MM   5.0f    // 직선 보간 세그먼트 길이 (mm)
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1003,7 +1003,9 @@ void taskControl(void* pv) {
       // ── A에서 Z 하강 (짧은 거리, IK 사용) ──
       case STATE_DESCEND_A: {
         CartesianPoint cur = solveFK();
-        if (!moveLinearXYZ(cur.x, cur.y, cur.z - zDescentMM, 1200)) {
+        float targetZ_A = cur.z - zDescentMM;
+        Serial.printf("[DESCEND_A] cur=(%.1f, %.1f, %.1f) targetZ=%.1f\n", cur.x, cur.y, cur.z, targetZ_A);
+        if (!moveLinearXYZ(cur.x, cur.y, targetZ_A, 1200)) {
           Serial.println("[CYCLE] A descend IK fail!");
           webCmd_ContinuousCycle = false;
           currentState = STATE_IDLE;
@@ -1046,7 +1048,9 @@ void taskControl(void* pv) {
       // ── B에서 Z 하강 ──
       case STATE_DESCEND_B: {
         CartesianPoint cur = solveFK();
-        if (!moveLinearXYZ(cur.x, cur.y, cur.z - zDescentMM, 1200)) {
+        float targetZ_B = cur.z - zDescentMM;
+        Serial.printf("[DESCEND_B] cur=(%.1f, %.1f, %.1f) targetZ=%.1f\n", cur.x, cur.y, cur.z, targetZ_B);
+        if (!moveLinearXYZ(cur.x, cur.y, targetZ_B, 1200)) {
           Serial.println("[CYCLE] B descend IK fail!");
           vacuumRelease(200);
           webCmd_ContinuousCycle = false;
