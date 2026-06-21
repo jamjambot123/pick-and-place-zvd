@@ -84,10 +84,10 @@
 #define STEPS_PER_DEG_SHOULDER ((float)(STEPS_PER_REV * MICROSTEPS) * GEAR_RATIO_SHOULDER / 360.0f)
 #define STEPS_PER_DEG_ELBOW   ((float)(STEPS_PER_REV * MICROSTEPS) * GEAR_RATIO_ELBOW / 360.0f)
 
-#define HOMING_SPEED_US       800
+#define HOMING_SPEED_US       1600
 #define HOMING_BACKOFF_STEPS  200
 #define HOME_DWELL_MS         200
-#define HOMING_APPROACH_SPEED_US  1600  // 2차 접근은 더 느리게 (정밀도)
+#define HOMING_APPROACH_SPEED_US  3200  // 2차 접근은 더 느리게 (정밀도)
 
 // 호밍 방향 (LOW/HIGH = DIR 핀 레벨, 스위치 쪽으로 가는 방향)
 #define HOMING_DIR_BASE       LOW
