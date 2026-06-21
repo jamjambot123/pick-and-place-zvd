@@ -663,8 +663,9 @@ void executeMotion(int32_t tb, int32_t ts, int32_t te, uint32_t base_ival) {
   // 베이스 모터가 움직여야 할 때만 일시적으로 켬 (HIGH=활성)
   if (db != 0) { digitalWrite(MOTOR1_BASE_ENA, HIGH); delayMicroseconds(50); }
   int8_t dirb = (db >= 0) ? 1 : -1, dirs = (ds >= 0) ? 1 : -1, dire = (de >= 0) ? 1 : -1;
-  // Common Anode로 인해 DIR 논리가 반전됨 (<= 0 이면 정방향). 단 숄더는 추가 반전(> 0).
-  digitalWrite(MOTOR1_BASE_DIR, dirb <= 0); digitalWrite(MOTOR2_SHOULDER_DIR, dirs > 0); digitalWrite(MOTOR3_ELBOW_DIR, dire <= 0);
+  // Common Anode로 인해 DIR 논리가 반전됨 (<= 0 이면 정방향).
+  // GPIO 6/7 모터(엘보우)만 추가 반전 필요 (> 0).
+  digitalWrite(MOTOR1_BASE_DIR, dirb <= 0); digitalWrite(MOTOR2_SHOULDER_DIR, dirs <= 0); digitalWrite(MOTOR3_ELBOW_DIR, dire > 0);
   delayMicroseconds(5);
   int32_t ab = abs(db), as = abs(ds), ae = abs(de);
   int32_t ms = max(ab, max(as, ae));
