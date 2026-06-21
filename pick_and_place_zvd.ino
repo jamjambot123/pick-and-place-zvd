@@ -485,7 +485,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 // ██  섹션 7: 시스템 함수 (MPU, IK, ZVD, 모터, 호밍)
 // ═══════════════════════════════════════════════════════════════════════════
 
-bool hardware_bypassed = true;
+bool hardware_bypassed = false; // 항상 실제 하드웨어 구동 모드로 설정
 bool mpu_connected = false;
 
 // 모터 활성화/비활성화 (TB6600: LOW=활성, HIGH=비활성)
@@ -1096,19 +1096,8 @@ void setup() {
   motorsEnable();
   digitalWrite(RELAY_VACUUM_PUMP, RELAY_OFF);
 
-  // 리밋 스위치 자동 감지
-  // NC 스위치(Base, Elbow)가 연결되면 평상시 LOW를 보냄 (풀업 + NC = GND 연결)
-  // NO 스위치(Shoulder)는 연결되어도 평상시 HIGH라서 감지 불가 → NC로 판별
-  delay(50);
-  bool nc_base_detected  = (digitalRead(LIMIT_BASE) == LOW);   // NC: 미눌림=LOW
-  bool nc_elbow_detected = (digitalRead(LIMIT_ELBOW) == LOW);  // NC: 미눌림=LOW
-  if (nc_base_detected || nc_elbow_detected) {
-    hardware_bypassed = false;
-    Serial.println("[INIT] Limit switches detected -> real homing enabled");
-  } else {
-    Serial.println("[INIT] No switches detected -> hardware bypassed (toggle via web UI)");
-  }
-
+  hardware_bypassed = false;
+  Serial.println("[INIT] Hardware bypassed mode OFF -> real homing enabled");
   // 3. 웹 서버 실행
   setupWiFiAndWeb();
 
