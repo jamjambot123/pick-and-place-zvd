@@ -922,7 +922,7 @@ void taskControl(void* pv) {
         } else { vTaskDelay(pdMS_TO_TICKS(5000)); }
         break;
 
-      case STATE_IDLE:
+      case STATE_IDLE: {
         // 직교 조그 처리
         if (webCmd_JogXYZ_Axis != 0) {
           if (!isHomed) {
@@ -970,6 +970,7 @@ void taskControl(void* pv) {
           }
         }
         break;
+      }
 
       // ── 사이클: A위로 이동 ──
       case STATE_MOVE_TO_A: {
