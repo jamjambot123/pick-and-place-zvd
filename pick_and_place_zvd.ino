@@ -94,7 +94,7 @@ struct MPU6050_Data { float ax, ay, az; float gx, gy, gz; };
 #define STEPS_PER_DEG_ELBOW   ((float)(STEPS_PER_REV * MICROSTEPS) * GEAR_RATIO_ELBOW / 360.0f)
 
 #define HOMING_SPEED_US       2000
-#define HOMING_BACKOFF_STEPS  500
+#define HOMING_BACKOFF_STEPS  250
 #define HOME_DWELL_MS         200
 #define HOMING_APPROACH_SPEED_US  4000
 
@@ -103,10 +103,10 @@ struct MPU6050_Data { float ax, ay, az; float gx, gy, gz; };
 #define HOMING_DIR_SHOULDER   HIGH  // GPIO 15/16 모터의 스위치 접근 방향
 #define HOMING_DIR_ELBOW      LOW   // GPIO 6/7 모터의 스위치 접근 방향
 
-// 호밍 후 초기 자세까지 물리적으로 되돌아갈 스텝 수 (원작 v0.81 config.h)
-#define HOME_OFFSET_BASE      3640  // Z_HOME_STEPS (베이스 회전)
-#define HOME_OFFSET_SHOULDER  1900  // Y_HOME_STEPS (Lower Arm = 숄더, 몸체쪽)
-#define HOME_OFFSET_ELBOW     1020  // X_HOME_STEPS (Upper Arm = 엘보우, 끝단쪽)
+// 호밍 후 초기 자세까지 물리적으로 되돌아갈 스텝 수 (8분주 기준)
+#define HOME_OFFSET_BASE      1820  // 3640/2
+#define HOME_OFFSET_SHOULDER  950   // 1900/2
+#define HOME_OFFSET_ELBOW     510   // 1020/2
 
 // 호밍 후 초기 자세에서의 각도 (원작: Lower=0°, Upper=90°, Rotate=0°)
 #define HOME_INITIAL_DEG_BASE      0.0f
