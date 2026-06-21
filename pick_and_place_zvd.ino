@@ -487,6 +487,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 
 bool hardware_bypassed = false; // 항상 실제 하드웨어 구동 모드로 설정
 bool mpu_connected = false;
+bool isHomed = false; // 호밍 완료 여부 추적
 
 // 모터 활성화/비활성화 (TB6600 Common Anode: LOW=전류흐름(비활성), HIGH=오픈드레인 차단(활성))
 void motorsEnable() {
@@ -868,6 +869,7 @@ void taskControl(void* pv) {
       case STATE_HOMING:
         if (homeAllAxes()) {
           estimateVibrationParams();
+          isHomed = true;
           currentState = STATE_IDLE;
           Serial.println("[STATE] IDLE");
         } else { vTaskDelay(pdMS_TO_TICKS(5000)); }
@@ -875,14 +877,20 @@ void taskControl(void* pv) {
 
       case STATE_IDLE:
         if (webCmd_JogXYZ_Axis != 0) {
-          CartesianPoint cur = solveFK();
-          float tx = cur.x, ty = cur.y, tz = cur.z;
-          if (webCmd_JogXYZ_Axis == 'x') tx += webCmd_JogXYZ_Dist;
-          if (webCmd_JogXYZ_Axis == 'y') ty += webCmd_JogXYZ_Dist;
-          if (webCmd_JogXYZ_Axis == 'z') tz += webCmd_JogXYZ_Dist;
-          webCmd_JogXYZ_Axis = 0;
-          if (!moveLinearXYZ(tx, ty, tz, 300)) {
-            Serial.println("IK fail (out of range)");
+          if (!isHomed) {
+            Serial.println("[ERROR] Must HOME before using Cartesian XYZ Jog!");
+            webCmd_JogXYZ_Axis = 0;
+          } else {
+            CartesianPoint cur = solveFK();
+            float tx = cur.x, ty = cur.y, tz = cur.z;
+            if (webCmd_JogXYZ_Axis == 'x') tx += webCmd_JogXYZ_Dist;
+            if (webCmd_JogXYZ_Axis == 'y') ty += webCmd_JogXYZ_Dist;
+            if (webCmd_JogXYZ_Axis == 'z') tz += webCmd_JogXYZ_Dist;
+            webCmd_JogXYZ_Axis = 0;
+            // 직교 좌표 이동 속도를 기존 300us에서 1000us로 확 낮춰서 돌발 움직임 방지
+            if (!moveLinearXYZ(tx, ty, tz, 1000)) {
+              Serial.println("IK fail (out of range)");
+            }
           }
         }
         if (webCmd_StartCycle) {
@@ -894,8 +902,9 @@ void taskControl(void* pv) {
         break;
 
       case STATE_APPROACH:
-        if (!moveLinearXYZ(POINT_A_X, POINT_A_Y, POINT_A_Z_ABOVE, 300) ||
-            !moveLinearXYZ(POINT_A_X, POINT_A_Y, POINT_A_Z, 500)) { currentState = STATE_RETURN; break; }
+        if (!isHomed) { currentState = STATE_IDLE; break; }
+        if (!moveLinearXYZ(POINT_A_X, POINT_A_Y, POINT_A_Z_ABOVE, 1000) ||
+            !moveLinearXYZ(POINT_A_X, POINT_A_Y, POINT_A_Z, 1200)) { currentState = STATE_RETURN; break; }
         currentState = STATE_PICK;
         break;
 
@@ -906,19 +915,19 @@ void taskControl(void* pv) {
         break;
 
       case STATE_TRANSFER:
-        if (!moveToXYZ(POINT_B_X, POINT_B_Y, POINT_B_Z_ABOVE, true, 200) ||
-            !moveLinearXYZ(POINT_B_X, POINT_B_Y, POINT_B_Z, 500)) { vacuumRelease(200); currentState = STATE_RETURN; break; }
+        if (!moveToXYZ(POINT_B_X, POINT_B_Y, POINT_B_Z_ABOVE, true, 800) ||
+            !moveLinearXYZ(POINT_B_X, POINT_B_Y, POINT_B_Z, 1200)) { vacuumRelease(200); currentState = STATE_RETURN; break; }
         currentState = STATE_PLACE_RELEASE;
         break;
 
       case STATE_PLACE_RELEASE:
         vacuumRelease(200);
-        moveLinearXYZ(POINT_B_X, POINT_B_Y, POINT_B_Z_ABOVE, 400);
+        moveLinearXYZ(POINT_B_X, POINT_B_Y, POINT_B_Z_ABOVE, 1000);
         currentState = STATE_RETURN;
         break;
 
       case STATE_RETURN:
-        moveToXYZ(HOME_X, HOME_Y, HOME_Z, true, 300);
+        moveToXYZ(HOME_X, HOME_Y, HOME_Z, true, 800);
         currentState = STATE_IDLE; // 한 사이클 끝내고 다시 대기
         break;
     }
