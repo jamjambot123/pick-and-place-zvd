@@ -198,18 +198,29 @@ void loadTeachPoints() {
 enum PickPlaceState {
   STATE_HOMING = 0,
   STATE_IDLE,
-  STATE_MOVE_TO_A,    // A 위치로 관절 이동
-  STATE_DESCEND_A,    // A에서 Z 하강 (IK)
-  STATE_PICK,         // 진공 흡착
-  STATE_ASCEND_A,     // A에서 Z 상승 (IK)
-  STATE_MOVE_TO_B,    // B 위치로 관절 이동
-  STATE_DESCEND_B,    // B에서 Z 하강 (IK)
-  STATE_PLACE,        // 진공 해제
-  STATE_ASCEND_B      // B에서 Z 상승 (IK)
+  // Phase 1: A→B (집기)
+  STATE_MOVE_TO_A,
+  STATE_DESCEND_A,
+  STATE_PICK,
+  STATE_ASCEND_A,
+  STATE_MOVE_TO_B,
+  STATE_DESCEND_B,
+  STATE_PLACE,
+  STATE_ASCEND_B,
+  // Phase 2: B→A (되가져오기)
+  STATE_DESCEND_B2,   // B아래로 (다시 집기)
+  STATE_PICK_B,       // 진공 흡착
+  STATE_ASCEND_B2,    // B위로
+  STATE_RETURN_A,     // A위로 이동
+  STATE_DESCEND_A2,   // A아래로 (놓기)
+  STATE_PLACE_A,      // 진공 해제
+  STATE_ASCEND_A2     // A위로 → 1사이클 완료
 };
 
 volatile PickPlaceState currentState = STATE_IDLE;
-String stateStrings[] = {"Homing...", "IDLE", "→A", "A↓", "Pick", "A↑", "→B", "B↓", "Place", "B↑"};
+String stateStrings[] = {"Homing...", "IDLE",
+  "→A↑", "A↓", "Pick", "A↑", "→B↑", "B↓", "Place", "B↑",
+  "B↓₂", "PickB", "B↑₂", "→A↑", "A↓₂", "PlaceA", "A↑₂"};
 
 // 웹 서버 인스턴스 (포트 80)
 WebServer server(80);
@@ -448,7 +459,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         <div class="data-row" style="margin-bottom:15px;"><span style="display:flex;align-items:center;"><span id="rp_dot" class="relay-dot"></span>진공 펌프</span>
           <span><button class="jog-btn" onclick="testCmd('pump',1)">ON</button> <button class="jog-btn" onclick="testCmd('pump',0)">OFF</button></span></div>
         <h3 style="color:var(--text-dim); margin:15px 0 8px;">관절 모터 조그</h3>
-        <div style="margin-bottom:8px;"><label style="color:var(--text-dim);font-size:0.85rem;">스텝 수: </label><input type="number" id="jogN" class="jog-input" value="50" min="1" max="500"></div>
+        <div style="margin-bottom:8px;"><label style="color:var(--text-dim);font-size:0.85rem;">스텝 수: </label><input type="number" id="jogN" class="jog-input" value="200" min="1" max="5000"></div>
         <div class="jog-group"><label>베이스</label><button class="jog-btn" onclick="jog('base',-1)">◀ CCW</button><button class="jog-btn" onclick="jog('base',1)">CW ▶</button></div>
         <div class="jog-group"><label>숄더</label><button class="jog-btn" onclick="jog('shoulder',-1)">◀ CCW</button><button class="jog-btn" onclick="jog('shoulder',1)">CW ▶</button></div>
         <div class="jog-group"><label>엘보</label><button class="jog-btn" onclick="jog('elbow',-1)">◀ CCW</button><button class="jog-btn" onclick="jog('elbow',1)">CW ▶</button></div>
@@ -1052,12 +1063,81 @@ void taskControl(void* pv) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
         delay(200);
+        currentState = STATE_DESCEND_B2;  // → Phase 2: B에서 다시 집기
+        break;
+      }
+
+      // ═══ Phase 2: B→A (되가져오기) ═══
+
+      // ── B아래로 하강 (다시 집기) ──
+      case STATE_DESCEND_B2: {
+        Serial.println("[CYCLE] B↓(집기)");
+        MotionCommand cmd = {pointB_down.steps_base, pointB_down.steps_shoulder, pointB_down.steps_elbow, 1200, false, false};
+        if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
+          xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+        }
+        delay(100);
+        currentState = STATE_PICK_B;
+        break;
+      }
+
+      case STATE_PICK_B:
+        vacuumGrip(500);
+        currentState = STATE_ASCEND_B2;
+        break;
+
+      case STATE_ASCEND_B2: {
+        MotionCommand cmd = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, 800, true, false};
+        if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
+          xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+        }
+        delay(200);
+        currentState = STATE_RETURN_A;
+        break;
+      }
+
+      // ── A위로 복귀 ──
+      case STATE_RETURN_A: {
+        Serial.println("[CYCLE] →A위(복귀)");
+        MotionCommand cmd = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, 800, true, false};
+        if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
+          xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+        }
+        delay(200);
+        currentState = STATE_DESCEND_A2;
+        break;
+      }
+
+      // ── A아래로 하강 (놓기) ──
+      case STATE_DESCEND_A2: {
+        Serial.println("[CYCLE] A↓(놓기)");
+        MotionCommand cmd = {pointA_down.steps_base, pointA_down.steps_shoulder, pointA_down.steps_elbow, 1200, false, false};
+        if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
+          xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+        }
+        delay(100);
+        currentState = STATE_PLACE_A;
+        break;
+      }
+
+      case STATE_PLACE_A:
+        vacuumRelease(200);
+        currentState = STATE_ASCEND_A2;
+        break;
+
+      // ── A위로 상승 → 1사이클 완료 ──
+      case STATE_ASCEND_A2: {
+        MotionCommand cmd = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, 800, true, false};
+        if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
+          xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+        }
+        delay(200);
         cycleCount++;
-        Serial.printf("[CYCLE] 사이클 #%d 완료!\n", (int)cycleCount);
+        Serial.printf("[CYCLE] 사이클 #%d 완료! (왕복)\n", (int)cycleCount);
         if (webCmd_ContinuousCycle) {
-          currentState = STATE_MOVE_TO_A;  // 무한 반복
+          currentState = STATE_MOVE_TO_A;  // 다시 Phase 1
         } else {
-          currentState = STATE_IDLE;  // E-STOP으로 중단됨
+          currentState = STATE_IDLE;
         }
         break;
       }
@@ -1154,7 +1234,7 @@ void setupWiFiAndWeb() {
       if(target == "pump") digitalWrite(RELAY_VACUUM_PUMP, state ? RELAY_ON : RELAY_OFF);
       else if(target.startsWith("jog_")) {
         int steps = 50;
-        if(server.hasArg("steps")) steps = constrain(server.arg("steps").toInt(), 1, 500);
+        if(server.hasArg("steps")) steps = constrain(server.arg("steps").toInt(), 1, 5000);
         int pinStep, pinDir;
         volatile int32_t* stepCounter = nullptr;
         if(target == "jog_base")          { pinStep = MOTOR1_BASE_STEP; pinDir = MOTOR1_BASE_DIR; stepCounter = &currentSteps_base; }
