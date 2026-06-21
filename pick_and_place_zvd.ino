@@ -638,7 +638,9 @@ ZVD_Impulse calculateZVD(float freq_hz, float zeta) {
 
 inline void stepPulse(int pin) {
   digitalWrite(pin, HIGH);
-  delayMicroseconds(10); // TB6600 인식률 향상을 위해 펄스 폭을 5us -> 10us로 증가
+  // 저가형 TB6600(4N25 포토커플러 등)의 느린 응답속도와 3.3V의 낮은 전압을 극복하기 위해 
+  // 펄스 유지 시간을 10us에서 100us로 대폭 늘려 확실히 인식되도록 함.
+  delayMicroseconds(100); 
   digitalWrite(pin, LOW);
 }
 
