@@ -94,10 +94,10 @@
 #define HOMING_DIR_SHOULDER   LOW
 #define HOMING_DIR_ELBOW      HIGH
 
-// 호밍 후 초기 위치까지 이동할 스텝 (레퍼런스: X_HOME_STEPS 등)
-#define HOME_OFFSET_BASE      0
-#define HOME_OFFSET_SHOULDER  1900
-#define HOME_OFFSET_ELBOW     1020
+// 호밍 후 초기 위치(0도)까지의 물리적 오프셋 스텝 (레퍼런스 v0.81 config.h 기준)
+#define HOME_OFFSET_BASE      3640 // Z_HOME_STEPS
+#define HOME_OFFSET_SHOULDER  1020 // X_HOME_STEPS (Upper Arm)
+#define HOME_OFFSET_ELBOW     1900 // Y_HOME_STEPS (Lower Arm)
 
 #define MIN_STEP_INTERVAL_US  100
 #define MAX_STEP_INTERVAL_US  5000
