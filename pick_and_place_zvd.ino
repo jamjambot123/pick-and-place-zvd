@@ -714,14 +714,7 @@ float getZFromSteps(int32_t ss, int32_t se) {
   return LOW_SHANK_LENGTH * sinf(sh_rad) + HIGH_SHANK_LENGTH * sinf(sh_rad + el_rad) + BASE_HEIGHT;
 }
 
-// 순운동학: 현재 스텝 → XYZ (관절 조그 후에도 정확한 좌표)
-CartesianPoint solveFK() {
-  int32_t sb, ss, se;
-  portENTER_CRITICAL(&stepsMux);
-  sb = currentSteps_base;
-  ss = currentSteps_shoulder;
-  se = currentSteps_elbow;
-  portEXIT_CRITICAL(&stepsMux);
+CartesianPoint solveFK_steps(int32_t sb, int32_t ss, int32_t se) {
   float base_rad = (sb / STEPS_PER_DEG_BASE) * PI / 180.0f;
   float sh_rad   = (ss / STEPS_PER_DEG_SHOULDER) * PI / 180.0f;
   float el_rad   = (se / STEPS_PER_DEG_ELBOW) * PI / 180.0f;
@@ -736,6 +729,17 @@ CartesianPoint solveFK() {
   p.y = r * cosf(base_rad);
   p.z = z;
   return p;
+}
+
+// 순운동학: 현재 스텝 → XYZ (관절 조그 후에도 정확한 좌표)
+CartesianPoint solveFK() {
+  int32_t sb, ss, se;
+  portENTER_CRITICAL(&stepsMux);
+  sb = currentSteps_base;
+  ss = currentSteps_shoulder;
+  se = currentSteps_elbow;
+  portEXIT_CRITICAL(&stepsMux);
+  return solveFK_steps(sb, ss, se);
 }
 
 void anglesToSteps(const JointAngles& angles, int32_t& b, int32_t& s, int32_t& e) {
@@ -974,7 +978,7 @@ bool moveLinearXYZ(float tx, float ty, float tz, uint32_t spd) {
     float ix = cur.x + dx * t;
     float iy = cur.y + dy * t;
     float iz = cur.z + dz * t;
-    if (!moveToXYZ(ix, iy, iz, activeProfile, spd)) return false;
+    if (!moveToXYZ(ix, iy, iz, PROFILE_SCURVE, spd)) return false;
   }
   return true;
 }
@@ -1131,18 +1135,23 @@ void taskControl(void* pv) {
         Serial.printf("[CYCLE] → A위 (최고점 경유)\n");
         float curZ = getZFromSteps(currentSteps_shoulder, currentSteps_elbow);
         float destZ = getZFromSteps(pointA_up.steps_shoulder, pointA_up.steps_elbow);
+        
+        CartesianPoint A_up_c = solveFK_steps(pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow);
+        float cur_base_rad = (currentSteps_base / STEPS_PER_DEG_BASE) * PI / 180.0f;
+        float rA = sqrtf(A_up_c.x*A_up_c.x + A_up_c.y*A_up_c.y);
+        float tx = rA * sinf(cur_base_rad);
+        float ty = rA * cosf(cur_base_rad);
+
         if (destZ > curZ) {
-          // 목적지가 더 높음: 제자리 상승 후 수평 회전
-          MotionCommand cmd1 = {currentSteps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, PROFILE_SCURVE, false};
-          if (xQueueSend(motionQueue, &cmd1, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+          // 목적지가 더 높음: 현재 각도에서 먼저 A_up의 반경/높이로 "직선 이동(처짐 방지)" 후 수평 회전
+          moveLinearXYZ(tx, ty, A_up_c.z, vertSpeedUs);
           delay(100);
           executeBaseMoveWithOvershoot(pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, motionSpeedUs);
         } else {
           // 현재가 더 높음: 높은 층에서 수평 회전 후 목적지로 하강
           executeBaseMoveWithOvershoot(pointA_up.steps_base, currentSteps_shoulder, currentSteps_elbow, motionSpeedUs);
           delay(100);
-          MotionCommand cmd2 = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, PROFILE_SCURVE, false};
-          if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+          moveLinearXYZ(A_up_c.x, A_up_c.y, A_up_c.z, vertSpeedUs);
         }
         // 하강 전 진동 안정화 및 잔류 진동 측정
         measureResidualVibration(500, activeProfile);
@@ -1186,18 +1195,23 @@ void taskControl(void* pv) {
         Serial.printf("[CYCLE] → B위 (최고점 경유)\n");
         float curZ = getZFromSteps(currentSteps_shoulder, currentSteps_elbow);
         float destZ = getZFromSteps(pointB_up.steps_shoulder, pointB_up.steps_elbow);
+
+        CartesianPoint B_up_c = solveFK_steps(pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow);
+        float cur_base_rad = (currentSteps_base / STEPS_PER_DEG_BASE) * PI / 180.0f;
+        float rB = sqrtf(B_up_c.x*B_up_c.x + B_up_c.y*B_up_c.y);
+        float tx = rB * sinf(cur_base_rad);
+        float ty = rB * cosf(cur_base_rad);
+
         if (destZ > curZ) {
-          // 목적지가 더 높음: 제자리 상승 후 수평 회전
-          MotionCommand cmd1 = {currentSteps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, vertSpeedUs, PROFILE_SCURVE, false};
-          if (xQueueSend(motionQueue, &cmd1, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+          // 목적지가 더 높음: 현재 각도에서 B_up의 반경/높이로 "직선 이동(처짐 방지)" 후 수평 회전
+          moveLinearXYZ(tx, ty, B_up_c.z, vertSpeedUs);
           delay(100);
           executeBaseMoveWithOvershoot(pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, motionSpeedUs);
         } else {
-          // 현재가 더 높음: 높은 층에서 수평 회전 후 목적지로 하강
+          // 현재가 더 높음: 높은 층에서 수평 회전 후 목적지로 직선 하강
           executeBaseMoveWithOvershoot(pointB_up.steps_base, currentSteps_shoulder, currentSteps_elbow, motionSpeedUs);
           delay(100);
-          MotionCommand cmd2 = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, vertSpeedUs, PROFILE_SCURVE, false};
-          if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+          moveLinearXYZ(B_up_c.x, B_up_c.y, B_up_c.z, vertSpeedUs);
         }
         // 하강 전 진동 안정화 및 잔류 진동 측정
         measureResidualVibration(500, activeProfile);
