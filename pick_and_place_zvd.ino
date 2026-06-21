@@ -28,6 +28,12 @@
 #include <WebServer.h>
 #include <Preferences.h>  // 플래시 메모리 저장용
 
+// ═══ 구조체 전방 선언 (모든 함수보다 앞에 위치해야 컴파일됨) ═══
+struct CartesianPoint { float x; float y; float z; };
+struct JointAngles { float base_deg; float shoulder_deg; float elbow_deg; bool valid; };
+struct MotionCommand { int32_t target_steps_base; int32_t target_steps_shoulder; int32_t target_steps_elbow; uint32_t step_interval_us; bool use_zvd; bool completed; };
+struct MPU6050_Data { float ax, ay, az; float gx, gy, gz; };
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ██  섹션 1: 하드웨어 핀맵 선언 (부팅 간섭 없는 안전 GPIO만 사용)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -183,11 +189,8 @@ void loadTeachPoints() {
 #define TASK_STEPPER_PRIORITY 24
 #define MOTION_QUEUE_SIZE     8
 
-struct CartesianPoint { float x; float y; float z; };
-struct JointAngles { float base_deg; float shoulder_deg; float elbow_deg; bool valid; };
-struct MotionCommand { int32_t target_steps_base; int32_t target_steps_shoulder; int32_t target_steps_elbow; uint32_t step_interval_us; bool use_zvd; bool completed; };
+// ZVD 임펄스 구조체 (ZVD_NUM_IMPULSES 정의 후에 위치해야 함)
 struct ZVD_Impulse { float amplitude[ZVD_NUM_IMPULSES]; float delay_ms[ZVD_NUM_IMPULSES]; };
-struct MPU6050_Data { float ax, ay, az; float gx, gy, gz; };
 
 enum PickPlaceState {
   STATE_HOMING = 0,
@@ -533,10 +536,10 @@ bool isHomed = false; // 호밍 완료 여부 추적
 
 // 모터 활성화/비활성화 (TB6600 Common Anode: LOW=전류흐름(비활성), HIGH=오픈드레인 차단(활성))
 void motorsEnable() {
-  digitalWrite(MOTOR1_BASE_ENA, LOW); // 베이스는 발열 방지를 위해 평소 꺼둠(전류흐름=비활성)
+  digitalWrite(MOTOR1_BASE_ENA, HIGH);  // 베이스도 항상 활성화 (위치 유지)
   digitalWrite(MOTOR2_SHOULDER_ENA, HIGH);
   digitalWrite(MOTOR3_ELBOW_ENA, HIGH);
-  Serial.println("[MOTOR] Enabled (Base OFF for cooling)");
+  Serial.println("[MOTOR] All motors enabled");
 }
 void motorsDisable() {
   digitalWrite(MOTOR1_BASE_ENA, LOW);
@@ -697,8 +700,6 @@ uint32_t trapezoidalProfile(int32_t cs, int32_t ts, uint32_t baseIval) {
 
 void executeMotion(int32_t tb, int32_t ts, int32_t te, uint32_t base_ival) {
   int32_t db = tb - currentSteps_base, ds = ts - currentSteps_shoulder, de = te - currentSteps_elbow;
-  // 베이스 모터가 움직여야 할 때만 일시적으로 켬 (HIGH=활성)
-  if (db != 0) { digitalWrite(MOTOR1_BASE_ENA, HIGH); delayMicroseconds(50); }
   int8_t dirb = (db >= 0) ? 1 : -1, dirs = (ds >= 0) ? 1 : -1, dire = (de >= 0) ? 1 : -1;
   // Common Anode로 인해 DIR 논리가 반전됨 (<= 0 이면 정방향).
   // GPIO 6/7 모터(엘보우)만 추가 반전 필요 (> 0).
@@ -721,9 +722,6 @@ void executeMotion(int32_t tb, int32_t ts, int32_t te, uint32_t base_ival) {
       vTaskDelay(pdMS_TO_TICKS(1));
     }
   }
-
-  // 이동 끝나면 베이스 모터 끄기 (LOW=비활성, 발열 방지)
-  if (db != 0) digitalWrite(MOTOR1_BASE_ENA, LOW);
 
   currentSteps_base = tb; currentSteps_shoulder = ts; currentSteps_elbow = te;
   motionComplete = true;
@@ -760,7 +758,6 @@ bool homeSingleAxis(int pinStep, int pinDir, int pinLim, int activeLevel, int ho
     Serial.printf("[HOME] %s bypassed (ctr=%d)\n", name, (int)ctr);
     return true;
   }
-  if (pinStep == MOTOR1_BASE_STEP) { digitalWrite(MOTOR1_BASE_ENA, HIGH); delayMicroseconds(50); }
   int backDir = homingDir == LOW ? HIGH : LOW;
   int32_t maxS = STEPS_PER_REV * MICROSTEPS * GEAR_RATIO_BASE * 2;
 
@@ -829,7 +826,6 @@ bool homeSingleAxis(int pinStep, int pinDir, int pinLim, int activeLevel, int ho
   // 5단계: 초기 자세 각도를 스텝 카운터에 설정
   ctr = (int32_t)(initialDeg * stepsPerDeg);
   delay(HOME_DWELL_MS);
-  if (pinStep == MOTOR1_BASE_STEP) digitalWrite(MOTOR1_BASE_ENA, HIGH);
   Serial.printf("[HOME] %s OK (initial=%.1f deg, ctr=%d)\n", name, initialDeg, (int)ctr);
   return true;
 }
@@ -1187,7 +1183,6 @@ void setupWiFiAndWeb() {
         else if(target == "jog_elbow")    { pinStep = MOTOR3_ELBOW_STEP; pinDir = MOTOR3_ELBOW_DIR; stepCounter = &currentSteps_elbow; }
         else { server.send(400, "text/plain", "BAD"); return; }
         
-        if (target == "jog_base") { digitalWrite(MOTOR1_BASE_ENA, HIGH); delayMicroseconds(50); }
         
         int dir = (state > 0) ? 1 : -1;
         // Common Anode로 인해 DIR 논리 반전 (state > 0 이면 LOW).
@@ -1203,8 +1198,7 @@ void setupWiFiAndWeb() {
           delayMicroseconds(HOMING_SPEED_US);
           if (i > 0 && i % 50 == 0) { vTaskDelay(pdMS_TO_TICKS(1)); }
         }
-        
-        if (target == "jog_base") digitalWrite(MOTOR1_BASE_ENA, LOW);
+
 
         // 스텝 카운터 업데이트 (FK 좌표 동기화)
         portENTER_CRITICAL(&stepsMux);
