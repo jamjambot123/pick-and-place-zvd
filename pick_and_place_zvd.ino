@@ -90,7 +90,7 @@
 #define HOMING_APPROACH_SPEED_US  1600  // 2차 접근은 더 느리게 (정밀도)
 
 // 호밍 방향 (LOW/HIGH = DIR 핀 레벨, 스위치 쪽으로 가는 방향)
-#define HOMING_DIR_BASE       HIGH
+#define HOMING_DIR_BASE       LOW
 #define HOMING_DIR_SHOULDER   LOW
 #define HOMING_DIR_ELBOW      HIGH
 
