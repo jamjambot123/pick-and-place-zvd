@@ -94,7 +94,7 @@ struct MPU6050_Data { float ax, ay, az; float gx, gy, gz; };
 #define STEPS_PER_DEG_ELBOW   ((float)(STEPS_PER_REV * MICROSTEPS) * GEAR_RATIO_ELBOW / 360.0f)
 
 #define HOMING_SPEED_US       2000
-#define HOMING_BACKOFF_STEPS  200
+#define HOMING_BACKOFF_STEPS  500
 #define HOME_DWELL_MS         200
 #define HOMING_APPROACH_SPEED_US  4000
 
