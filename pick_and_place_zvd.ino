@@ -488,17 +488,17 @@ const char index_html[] PROGMEM = R"rawliteral(
 bool hardware_bypassed = false; // 항상 실제 하드웨어 구동 모드로 설정
 bool mpu_connected = false;
 
-// 모터 활성화/비활성화 (TB6600: LOW=활성, HIGH=비활성)
+// 모터 활성화/비활성화 (TB6600 Common Anode: LOW=전류흐름(비활성), HIGH=오픈드레인 차단(활성))
 void motorsEnable() {
-  digitalWrite(MOTOR1_BASE_ENA, HIGH); // 베이스는 발열 방지를 위해 평소 꺼둠
-  digitalWrite(MOTOR2_SHOULDER_ENA, LOW);
-  digitalWrite(MOTOR3_ELBOW_ENA, LOW);
+  digitalWrite(MOTOR1_BASE_ENA, LOW); // 베이스는 발열 방지를 위해 평소 꺼둠(전류흐름=비활성)
+  digitalWrite(MOTOR2_SHOULDER_ENA, HIGH);
+  digitalWrite(MOTOR3_ELBOW_ENA, HIGH);
   Serial.println("[MOTOR] Enabled (Base OFF for cooling)");
 }
 void motorsDisable() {
-  digitalWrite(MOTOR1_BASE_ENA, HIGH);
-  digitalWrite(MOTOR2_SHOULDER_ENA, HIGH);
-  digitalWrite(MOTOR3_ELBOW_ENA, HIGH);
+  digitalWrite(MOTOR1_BASE_ENA, LOW);
+  digitalWrite(MOTOR2_SHOULDER_ENA, LOW);
+  digitalWrite(MOTOR3_ELBOW_ENA, LOW);
   Serial.println("[MOTOR] Disabled (free spin)");
 }
 
@@ -637,11 +637,10 @@ ZVD_Impulse calculateZVD(float freq_hz, float zeta) {
 }
 
 inline void stepPulse(int pin) {
-  digitalWrite(pin, HIGH);
-  // 저가형 TB6600(4N25 포토커플러 등)의 느린 응답속도와 3.3V의 낮은 전압을 극복하기 위해 
-  // 펄스 유지 시간을 10us에서 100us로 대폭 늘려 확실히 인식되도록 함.
-  delayMicroseconds(100); 
+  // Common Anode (PUL- 연결) 방식: LOW일 때 전류가 흐르고, HIGH(Open-Drain)일 때 차단됨.
   digitalWrite(pin, LOW);
+  delayMicroseconds(100); 
+  digitalWrite(pin, HIGH);
 }
 
 uint32_t trapezoidalProfile(int32_t cs, int32_t ts, uint32_t baseIval) {
@@ -655,7 +654,8 @@ uint32_t trapezoidalProfile(int32_t cs, int32_t ts, uint32_t baseIval) {
 
 void executeMotion(int32_t tb, int32_t ts, int32_t te, uint32_t base_ival) {
   int32_t db = tb - currentSteps_base, ds = ts - currentSteps_shoulder, de = te - currentSteps_elbow;
-  if(db != 0) { digitalWrite(MOTOR1_BASE_ENA, LOW); delayMicroseconds(50); }
+  // 베이스 모터가 움직여야 할 때만 일시적으로 켬 (HIGH=활성)
+  if (db != 0) { digitalWrite(MOTOR1_BASE_ENA, HIGH); delayMicroseconds(50); }
   int8_t dirb = (db >= 0) ? 1 : -1, dirs = (ds >= 0) ? 1 : -1, dire = (de >= 0) ? 1 : -1;
   digitalWrite(MOTOR1_BASE_DIR, dirb > 0); digitalWrite(MOTOR2_SHOULDER_DIR, dirs > 0); digitalWrite(MOTOR3_ELBOW_DIR, dire > 0);
   delayMicroseconds(5);
@@ -677,8 +677,8 @@ void executeMotion(int32_t tb, int32_t ts, int32_t te, uint32_t base_ival) {
     }
   }
 
-  // 이동 끝나면 베이스 모터 끄기 (발열 방지)
-  if (db != 0) digitalWrite(MOTOR1_BASE_ENA, HIGH);
+  // 이동 끝나면 베이스 모터 끄기 (LOW=비활성, 발열 방지)
+  if (db != 0) digitalWrite(MOTOR1_BASE_ENA, LOW);
 
   currentSteps_base = tb; currentSteps_shoulder = ts; currentSteps_elbow = te;
   motionComplete = true;
@@ -714,7 +714,7 @@ bool homeSingleAxis(int pinStep, int pinDir, int pinLim, int activeLevel, int ho
     Serial.printf("[HOME] %s bypassed\n", name);
     return true;
   }
-  if (pinStep == MOTOR1_BASE_STEP) { digitalWrite(MOTOR1_BASE_ENA, LOW); delayMicroseconds(50); }
+  if (pinStep == MOTOR1_BASE_STEP) { digitalWrite(MOTOR1_BASE_ENA, HIGH); delayMicroseconds(50); }
   int backDir = homingDir == LOW ? HIGH : LOW;
   int32_t maxS = STEPS_PER_REV * MICROSTEPS * GEAR_RATIO_BASE * 2;
 
@@ -1034,7 +1034,7 @@ void setupWiFiAndWeb() {
         else if(target == "jog_elbow")    { pinStep = MOTOR3_ELBOW_STEP; pinDir = MOTOR3_ELBOW_DIR; stepCounter = &currentSteps_elbow; }
         else { server.send(400, "text/plain", "BAD"); return; }
         
-        if (target == "jog_base") { digitalWrite(MOTOR1_BASE_ENA, LOW); delayMicroseconds(50); }
+        if (target == "jog_base") { digitalWrite(MOTOR1_BASE_ENA, HIGH); delayMicroseconds(50); }
         
         int dir = (state > 0) ? 1 : -1;
         digitalWrite(pinDir, state > 0 ? HIGH : LOW);
@@ -1045,7 +1045,7 @@ void setupWiFiAndWeb() {
           if (i > 0 && i % 50 == 0) { vTaskDelay(pdMS_TO_TICKS(1)); }
         }
         
-        if (target == "jog_base") digitalWrite(MOTOR1_BASE_ENA, HIGH);
+        if (target == "jog_base") digitalWrite(MOTOR1_BASE_ENA, LOW);
 
         // 스텝 카운터 업데이트 (FK 좌표 동기화)
         portENTER_CRITICAL(&stepsMux);
@@ -1085,10 +1085,10 @@ void setup() {
   // 1. MPU 통신을 가장 먼저 시도하여 하드웨어 연결 상태 파악
   mpu6050_init();
 
-  // 2. 핀 모드 초기화 (센서 연결 여부와 관계없이 스위치 풀업을 위해 항상 실행!)
-  pinMode(MOTOR1_BASE_STEP, OUTPUT); pinMode(MOTOR1_BASE_DIR, OUTPUT); pinMode(MOTOR1_BASE_ENA, OUTPUT);
-  pinMode(MOTOR2_SHOULDER_STEP, OUTPUT); pinMode(MOTOR2_SHOULDER_DIR, OUTPUT); pinMode(MOTOR2_SHOULDER_ENA, OUTPUT);
-  pinMode(MOTOR3_ELBOW_STEP, OUTPUT); pinMode(MOTOR3_ELBOW_DIR, OUTPUT); pinMode(MOTOR3_ELBOW_ENA, OUTPUT);
+  // Common Anode 배선(PUL+가 5V)에서 3.3V 보드가 펄스를 확실히 끄기 위해 Open-Drain 필수
+  pinMode(MOTOR1_BASE_STEP, OUTPUT_OPEN_DRAIN); pinMode(MOTOR1_BASE_DIR, OUTPUT_OPEN_DRAIN); pinMode(MOTOR1_BASE_ENA, OUTPUT_OPEN_DRAIN);
+  pinMode(MOTOR2_SHOULDER_STEP, OUTPUT_OPEN_DRAIN); pinMode(MOTOR2_SHOULDER_DIR, OUTPUT_OPEN_DRAIN); pinMode(MOTOR2_SHOULDER_ENA, OUTPUT_OPEN_DRAIN);
+  pinMode(MOTOR3_ELBOW_STEP, OUTPUT_OPEN_DRAIN); pinMode(MOTOR3_ELBOW_DIR, OUTPUT_OPEN_DRAIN); pinMode(MOTOR3_ELBOW_ENA, OUTPUT_OPEN_DRAIN);
   pinMode(LIMIT_BASE, INPUT_PULLUP); pinMode(LIMIT_SHOULDER, INPUT_PULLUP); pinMode(LIMIT_ELBOW, INPUT_PULLUP);
   // 5V 릴레이와 3.3V ESP32의 전압 충돌(1.7V 잔류)을 막기 위해 Open-Drain 사용
   pinMode(RELAY_VACUUM_PUMP, OUTPUT_OPEN_DRAIN);
