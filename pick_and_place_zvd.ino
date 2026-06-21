@@ -464,6 +464,10 @@ const char index_html[] PROGMEM = R"rawliteral(
         <div class="jog-group"><label>숄더</label><button class="jog-btn" onclick="jog('shoulder',-1)">◀ CCW</button><button class="jog-btn" onclick="jog('shoulder',1)">CW ▶</button></div>
         <div class="jog-group"><label>엘보</label><button class="jog-btn" onclick="jog('elbow',-1)">◀ CCW</button><button class="jog-btn" onclick="jog('elbow',1)">CW ▶</button></div>
         
+        <h3 style="color:#10b981; margin:15px 0 8px;">↕ 수직 조그 (자코비안)</h3>
+        <div style="margin-bottom:8px;"><label style="color:var(--text-dim);font-size:0.85rem;">mm: </label><input type="number" id="jogZmm" class="jog-input" value="5" min="1" max="50"></div>
+        <div class="jog-group"><label>Z축</label><button class="jog-btn" style="background:#10b981;" onclick="jogZ(1)">▲ Z+(상)</button><button class="jog-btn" style="background:#f43f5e;" onclick="jogZ(-1)">▼ Z-(하)</button></div>
+        
         <h3 style="color:var(--text-dim); margin:15px 0 8px;">직교 좌표 조그 (IK)</h3>
         <div style="margin-bottom:8px;"><label style="color:var(--text-dim);font-size:0.85rem;">거리(mm): </label><input type="number" id="jogXyzDist" class="jog-input" value="10" min="1" max="100"></div>
         <div class="jog-group"><label>X 축</label><button class="jog-btn" onclick="jogXYZ('x',-1)">-X (좌)</button><button class="jog-btn" onclick="jogXYZ('x',1)">+X (우)</button></div>
@@ -524,6 +528,11 @@ const char index_html[] PROGMEM = R"rawliteral(
       const n = document.getElementById('jogN').value || 50;
       const f = new URLSearchParams(); f.append('target','jog_'+axis); f.append('state',dir); f.append('steps',n);
       fetch('/api/test_cmd', { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:f }).then(r => { if(!r.ok) alert('BUSY'); });
+    }
+    function jogZ(dir) {
+      const mm = document.getElementById('jogZmm').value || 5;
+      const f = new URLSearchParams(); f.append('target','jog_z'); f.append('state',dir); f.append('steps',mm);
+      fetch('/api/test_cmd', { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:f }).then(r => { if(!r.ok) alert('RANGE'); });
     }
     function jogXYZ(axis, dir) {
       const d = document.getElementById('jogXyzDist').value || 10;
@@ -1240,6 +1249,35 @@ void setupWiFiAndWeb() {
         if(target == "jog_base")          { pinStep = MOTOR1_BASE_STEP; pinDir = MOTOR1_BASE_DIR; stepCounter = &currentSteps_base; }
         else if(target == "jog_shoulder") { pinStep = MOTOR2_SHOULDER_STEP; pinDir = MOTOR2_SHOULDER_DIR; stepCounter = &currentSteps_shoulder; }
         else if(target == "jog_elbow")    { pinStep = MOTOR3_ELBOW_STEP; pinDir = MOTOR3_ELBOW_DIR; stepCounter = &currentSteps_elbow; }
+        else if(target == "jog_z") {
+          // 자코비안 기반 수직 조그: 숫더+엘보 동시 구동으로 수직 이동
+          float z_mm = (float)(steps * ((state > 0) ? 1 : -1));
+          float sh_r = (float)currentSteps_shoulder / STEPS_PER_DEG_SHOULDER * (PI / 180.0f);
+          float el_r = (float)currentSteps_elbow / STEPS_PER_DEG_ELBOW * (PI / 180.0f);
+          float s1 = sinf(sh_r), c1 = cosf(sh_r);
+          float s12 = sinf(sh_r + el_r), c12 = cosf(sh_r + el_r);
+          // J = [dr/dθ1  dr/dθ2]   [-L1*s1-L2*s12  -L2*s12]
+          //     [dz/dθ1  dz/dθ2] = [ L1*c1+L2*c12   L2*c12]
+          float J11 = -LOW_SHANK_LENGTH*s1 - HIGH_SHANK_LENGTH*s12;
+          float J12 = -HIGH_SHANK_LENGTH*s12;
+          float J21 =  LOW_SHANK_LENGTH*c1 + HIGH_SHANK_LENGTH*c12;
+          float J22 =  HIGH_SHANK_LENGTH*c12;
+          if (fabsf(J11) < 0.01f) { server.send(400, "text/plain", "SING"); return; }
+          float ratio = -J12 / J11;  // dθ1/dθ2 for dr=0
+          float dz_per = J21 * ratio + J22;
+          if (fabsf(dz_per) < 0.01f) { server.send(400, "text/plain", "SING"); return; }
+          float dth2 = z_mm / dz_per;
+          float dth1 = ratio * dth2;
+          int32_t ds = (int32_t)(dth1 * STEPS_PER_DEG_SHOULDER * (180.0f / PI));
+          int32_t de = (int32_t)(dth2 * STEPS_PER_DEG_ELBOW * (180.0f / PI));
+          int32_t ts = currentSteps_shoulder + ds;
+          int32_t te = currentSteps_elbow + de;
+          Serial.printf("[JOG_Z] %.0fmm -> sh%+d el%+d\n", z_mm, (int)ds, (int)de);
+          MotionCommand cmd = {currentSteps_base, ts, te, 1000, false, false};
+          xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(500));
+          server.send(200, "text/plain", "OK");
+          return;
+        }
         else { server.send(400, "text/plain", "BAD"); return; }
         
         
