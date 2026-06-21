@@ -1065,7 +1065,7 @@ void taskControl(void* pv) {
           MotionCommand cmd2 = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, activeProfile, false};
           if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
-        delay(100);
+        delay(500); // 하강 전 진동 안정화 딜레이
         currentState = STATE_PICK;
         break;
       }
@@ -1121,7 +1121,7 @@ void taskControl(void* pv) {
           MotionCommand cmd2 = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, vertSpeedUs, activeProfile, false};
           if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
-        delay(100);
+        delay(500); // 하강 전 진동 안정화 딜레이
         currentState = STATE_DESCEND_B;
         break;
       }
@@ -1206,7 +1206,7 @@ void taskControl(void* pv) {
           MotionCommand cmd2 = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, activeProfile, false};
           if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
-        delay(100);
+        delay(500); // 하강 전 진동 안정화 딜레이
         currentState = STATE_DESCEND_A2;
         break;
       }
