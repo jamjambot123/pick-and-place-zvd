@@ -235,13 +235,17 @@ enum PickPlaceState {
   STATE_RETURN_A,     // A위로 이동
   STATE_DESCEND_A2,   // A아래로 (놓기)
   STATE_PLACE_A,      // 진공 해제
-  STATE_ASCEND_A2     // A위로 → 1사이클 완료
+  STATE_ASCEND_A2,    // A위로 → 1사이클 완료
+  STATE_RETURN_HOME   // 사이클 종료 후 호밍 안전 구역(0,0,0) 복귀
 };
 
 volatile PickPlaceState currentState = STATE_IDLE;
 String stateStrings[] = {"Homing...", "IDLE",
   "→A↑", "A↓", "Pick", "A↑", "→B↑", "B↓", "Place", "B↑",
-  "B↓₂", "PickB", "B↑₂", "→A↑", "A↓₂", "PlaceA", "A↑₂"};
+  "B↓₂", "PickB", "B↑₂", "→A↑", "A↓₂", "PlaceA", "A↑₂", "→Home"};
+
+volatile float last_vib_scurve = 0.0f;
+volatile float last_vib_zvd = 0.0f;
 
 // 웹 서버 인스턴스 (포트 80)
 WebServer server(80);
@@ -429,6 +433,15 @@ const char index_html[] PROGMEM = R"rawliteral(
       </div>
       
       <div id="cycleInfo" class="data-row" style="margin-bottom:10px;"><span>사이클 횟수</span><span class="data-val">0</span></div>
+      
+      <!-- 잔류 진동 리포트 (동적 업데이트) -->
+      <div style="margin-bottom:15px; padding:10px; background:rgba(0,0,0,0.2); border-radius:8px; border:1px solid rgba(255,255,255,0.1);">
+        <h3 style="color:#a855f7; margin:0 0 8px; font-size:0.95rem;">📊 잔류 진동 측정 리포트</h3>
+        <div class="data-row" style="font-size:0.85rem;"><span>S-Curve 진동값</span><span id="vibScurve" class="data-val" style="color:white;">0.000 G</span></div>
+        <div class="data-row" style="font-size:0.85rem; margin-top:4px;"><span>ZVD 진동값</span><span id="vibZvd" class="data-val" style="color:#10b981;">0.000 G</span></div>
+        <div style="font-size:0.75rem; color:var(--text-dim); margin-top:8px; line-height:1.3;">* Peak-to-Peak: 이동 직후 500ms 동안 측정된 최대 흔들림 폭입니다. ZVD 적용 시 진동이 감소하는지 확인하세요.</div>
+      </div>
+
       <div style="margin-bottom:15px;">
         <h3 style="color:var(--text-dim); margin:0 0 8px; font-size:1rem;">⚙ 사이클 설정</h3>
         <div class="data-row" style="margin-bottom:4px;"><span>모션 프로파일</span><select id="profSel" class="jog-input" style="width:100px;"><option value="0">사다리꼴</option><option value="1" selected>S-curve</option><option value="2">ZVD</option></select></div>
@@ -526,6 +539,14 @@ const char index_html[] PROGMEM = R"rawliteral(
           });
           const cycInfo = document.getElementById('cycleInfo');
           if(cycInfo) cycInfo.innerHTML = '<span>사이클 횟수</span><span class="data-val">'+data.cycles+' / '+data.cycles_target+'</span>';
+          
+          if(document.getElementById('vibScurve') && data.vib_s !== undefined) {
+             document.getElementById('vibScurve').innerText = data.vib_s.toFixed(3) + ' G';
+          }
+          if(document.getElementById('vibZvd') && data.vib_z !== undefined) {
+             document.getElementById('vibZvd').innerText = data.vib_z.toFixed(3) + ' G';
+          }
+
           if(initInputs && data.spd_us) document.getElementById('spdUs').value = data.spd_us;
           if(initInputs && data.vspd_us) document.getElementById('vspdUs').value = data.vspd_us;
           if(initInputs && data.grip_ms) document.getElementById('gripMs').value = data.grip_ms;
@@ -977,6 +998,35 @@ void taskStepper(void* pv) {
 // ██  섹션 8: Core 0 메인 제어 태스크 (상태 머신 + 웹 GUI 트리거 처리)
 // ═══════════════════════════════════════════════════════════════════════════
 
+// 잔류 진동 측정 함수 (이동 직후 멈춰서 측정)
+void measureResidualVibration(uint32_t waitMs, uint8_t profile) {
+  uint32_t startMs = millis();
+  float minA = 9999.0f, maxA = -9999.0f;
+  bool hasData = false;
+  
+  while (millis() - startMs < waitMs) {
+    if (xSemaphoreTake(mpuMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+      // 수평축 가속도 벡터 크기
+      float magnitude = sqrt(mpu_data.ax * mpu_data.ax + mpu_data.ay * mpu_data.ay);
+      if (magnitude < minA) minA = magnitude;
+      if (magnitude > maxA) maxA = magnitude;
+      hasData = true;
+      xSemaphoreGive(mpuMutex);
+    }
+    vTaskDelay(pdMS_TO_TICKS(5));
+  }
+  
+  if (hasData) {
+    float peakToPeak = maxA - minA;
+    if (profile == PROFILE_ZVD) {
+      last_vib_zvd = peakToPeak;
+    } else {
+      last_vib_scurve = peakToPeak;
+    }
+    Serial.printf("[VIB] 잔류 진동 측정 (프로파일 %d): %.3f G (P2P)\n", profile, peakToPeak);
+  }
+}
+
 // 백래시(기계적 유격) 제거용 오버슈팅 수평 이동 함수 (홈 스위치와 유사한 원리)
 // 항상 Base 모터가 같은 방향(+)으로 기어를 물고 최종 정지하도록 만듦
 void executeBaseMoveWithOvershoot(int32_t targetBase, int32_t targetShoulder, int32_t targetElbow, uint32_t speedUs) {
@@ -1094,7 +1144,8 @@ void taskControl(void* pv) {
           MotionCommand cmd2 = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, PROFILE_SCURVE, false};
           if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
-        delay(500); // 하강 전 진동 안정화 딜레이
+        // 하강 전 진동 안정화 및 잔류 진동 측정
+        measureResidualVibration(500, activeProfile);
         currentState = STATE_DESCEND_A;
         break;
       }
@@ -1148,7 +1199,8 @@ void taskControl(void* pv) {
           MotionCommand cmd2 = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, vertSpeedUs, PROFILE_SCURVE, false};
           if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
-        delay(500); // 하강 전 진동 안정화 딜레이
+        // 하강 전 진동 안정화 및 잔류 진동 측정
+        measureResidualVibration(500, activeProfile);
         currentState = STATE_DESCEND_B;
         break;
       }
@@ -1204,12 +1256,29 @@ void taskControl(void* pv) {
         Serial.printf("[CYCLE] 사이클 %d/%d회 완료!\n", (int)cycleCount, (int)targetCycleCount);
         
         if (webCmd_StopCycle || cycleCount >= targetCycleCount) {
-          Serial.println("[CYCLE] 지정 횟수 도달 또는 정지 명령 수신 -> IDLE");
-          currentState = STATE_IDLE; // 지정 횟수 도달 또는 자연정지 요청 시 정지
+          Serial.println("[CYCLE] 지정 횟수 도달 또는 정지 명령 수신 -> 안전 호밍 위치로 이동");
+          currentState = STATE_RETURN_HOME; // 지정 횟수 도달 시 IDLE이 아닌 안전 복귀
         } else {
           Serial.println("[CYCLE] 다음 횟수 이송을 위해 하강합니다.");
           currentState = STATE_DESCEND_A; // 목표 횟수 미달 시 다시 집기 시작
         }
+        break;
+      }
+
+      // ── 사이클 종료 시 안전 호밍 위치(0,0,0) 복귀 ──
+      case STATE_RETURN_HOME: {
+        Serial.println("[CYCLE] 사이클 완전 종료. 안전 호밍 대기 위치(0,0,0)로 복귀합니다.");
+        
+        // 1. Z축을 높게 유지한 채 Base를 0으로 먼저 회전 (충돌 방지)
+        executeBaseMoveWithOvershoot(0, currentSteps_shoulder, currentSteps_elbow, motionSpeedUs);
+        delay(100);
+        
+        // 2. 어깨와 팔꿈치를 0,0 (최초 자세)으로 완전히 접기
+        MotionCommand cmd2 = {0, 0, 0, vertSpeedUs, PROFILE_SCURVE, false};
+        if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
+        
+        Serial.println("[CYCLE] 복귀 완료. 이제 호밍을 수행해도 안전합니다 -> IDLE");
+        currentState = STATE_IDLE;
         break;
       }
     }
@@ -1243,7 +1312,7 @@ void setupWiFiAndWeb() {
 
   // 2. 상태 폴링 API
   server.on("/api/status", HTTP_GET, [](){
-    char json[900];
+    char json[1024];
     int sb = (digitalRead(LIMIT_BASE) == LIMIT_BASE_ACTIVE) ? 1 : 0;
     int ss = (digitalRead(LIMIT_SHOULDER) == LIMIT_SHOULDER_ACTIVE) ? 1 : 0;
     int se = (digitalRead(LIMIT_ELBOW) == LIMIT_ELBOW_ACTIVE) ? 1 : 0;
@@ -1259,17 +1328,19 @@ void setupWiFiAndWeb() {
       "\"cur_pos\":{\"x\":%.1f,\"y\":%.1f,\"z\":%.1f},"
       "\"ax\":%.3f,\"ay\":%.3f,\"az\":%.3f,\"gx\":%.2f,\"gy\":%.2f,\"gz\":%.2f,"
       "\"freq\":%.2f,\"zeta\":%.3f,"
-      "\"ptAU\":%d,\"ptAD\":%d,\"ptBU\":%d,\"ptBD\":%d,\"cycles\":%d,"
+      "\"ptAU\":%d,\"ptAD\":%d,\"ptBU\":%d,\"ptBD\":%d,\"cycles\":%d,\"cycles_target\":%d,"
       "\"sw_base\":%d,\"sw_shoulder\":%d,\"sw_elbow\":%d,"
       "\"relay_pump\":%d,\"mpu_ok\":%d,"
-      "\"spd_us\":%d,\"vspd_us\":%d,\"grip_ms\":%d,\"rel_ms\":%d,\"prof\":%d}",
+      "\"spd_us\":%d,\"vspd_us\":%d,\"grip_ms\":%d,\"rel_ms\":%d,\"prof\":%d,"
+      "\"vib_s\":%.3f,\"vib_z\":%.3f}",
       (int)currentState, stateStrings[currentState].c_str(),
       fk.x, fk.y, fk.z,
       md.ax, md.ay, md.az, md.gx, md.gy, md.gz,
       zvd_natural_freq_hz, zvd_damping_ratio,
-      pointA_up.saved?1:0, pointA_down.saved?1:0, pointB_up.saved?1:0, pointB_down.saved?1:0, (int)cycleCount,
+      pointA_up.saved?1:0, pointA_down.saved?1:0, pointB_up.saved?1:0, pointB_down.saved?1:0, (int)cycleCount, (int)targetCycleCount,
       sb, ss, se, rp, mpu_connected ? 1 : 0,
-      (int)motionSpeedUs, (int)vertSpeedUs, (int)gripDelayMs, (int)releaseDelayMs, (int)activeProfile);
+      (int)motionSpeedUs, (int)vertSpeedUs, (int)gripDelayMs, (int)releaseDelayMs, (int)activeProfile,
+      last_vib_scurve, last_vib_zvd);
     server.send(200, "application/json", json);
   });
 
