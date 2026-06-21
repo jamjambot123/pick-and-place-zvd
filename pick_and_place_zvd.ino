@@ -434,7 +434,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         <div class="data-row" style="margin-bottom:4px;"><span>해제 대기(ms)</span><input type="number" id="relMs" class="jog-input" value="500" min="100" max="5000" style="width:70px;"></div>
         <button class="btn btn-secondary" style="padding:6px;width:100%;" onclick="setTiming()">💾 적용 & 저장</button>
       </div>
-      <button class="btn btn-danger" style="width:100%;" onclick="sendCommand('startCycle')">🔄 무한 반복 사이클 시작</button>
+      <button class="btn btn-danger" style="width:100%;" onclick="sendCommand('startCycle')">🔄 단일 사이클 시작 (1회 이송)</button>
     </div>
   </div>
 
@@ -1058,7 +1058,8 @@ void taskControl(void* pv) {
             digitalWrite(RELAY_VACUUM_PUMP, RELAY_OFF);
             cycleCount = 0;
             currentState = STATE_MOVE_TO_A;
-            Serial.println("[CYCLE] 무한 반복 사이클 시작!");
+            webCmd_ContinuousCycle = false; // 플래그 즉시 해제 (단일 사이클)
+            Serial.println("[CYCLE] 단일 사이클(1회 이송) 시작!");
           }
         }
         break;
@@ -1159,105 +1160,40 @@ void taskControl(void* pv) {
         currentState = STATE_ASCEND_B;
         break;
 
-      // ── B위로 상승 후 반복 ──
+      // ── B위로 상승 후 복귀 ──
       case STATE_ASCEND_B: {
         MotionCommand cmd = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, vertSpeedUs, activeProfile, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
         delay(200);
-        currentState = STATE_DESCEND_B2; 
+        currentState = STATE_RETURN_A; // 바로 A 빈손 복귀
         break;
       }
 
-      // ═══ Phase 2: B→A (되가져오기) ═══
-
-      // ── B아래로 하강 (다시 집기) ──
-      case STATE_DESCEND_B2: {
-        Serial.println("[CYCLE] B↓(집기)");
-        MotionCommand cmd = {pointB_down.steps_base, pointB_down.steps_shoulder, pointB_down.steps_elbow, vertSpeedUs, activeProfile, false};
-        if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
-          xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
-        }
-        delay(100);
-        currentState = STATE_PICK_B;
-        break;
-      }
-
-      case STATE_PICK_B:
-        digitalWrite(RELAY_VACUUM_PUMP, RELAY_ON);
-        delay(gripDelayMs); // 흡입력 확보 대기
-        Serial.println("[CYCLE] 펠프ON (B)");
-        currentState = STATE_ASCEND_B2;
-        break;
-
-      case STATE_ASCEND_B2: {
-        MotionCommand cmd = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, vertSpeedUs, activeProfile, false};
-        if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
-          xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
-        }
-        delay(200);
-        currentState = STATE_RETURN_A;
-        break;
-      }
-
-      // ── A위로 복귀 (최고점 경유) ──
+      // ── A위로 복귀 (최고점 경유, 빈손) ──
       case STATE_RETURN_A: {
-        Serial.println("[CYCLE] →A위 복귀 (최고점 경유)");
+        Serial.println("[CYCLE] →A위 복귀 (빈손)");
         float curZ = getZFromSteps(currentSteps_shoulder, currentSteps_elbow);
         float destZ = getZFromSteps(pointA_up.steps_shoulder, pointA_up.steps_elbow);
         if (destZ > curZ) {
-          // 목적지가 더 높음
           MotionCommand cmd1 = {currentSteps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, activeProfile, false};
           if (xQueueSend(motionQueue, &cmd1, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
           delay(100);
           executeBaseMoveWithOvershoot(pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, motionSpeedUs);
         } else {
-          // 현재가 더 높음
           executeBaseMoveWithOvershoot(pointA_up.steps_base, currentSteps_shoulder, currentSteps_elbow, motionSpeedUs);
           delay(100);
           MotionCommand cmd2 = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, activeProfile, false};
           if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
-        delay(500); // 하강 전 진동 안정화 딜레이
-        currentState = STATE_DESCEND_A2;
-        break;
-      }
-
-      // ── A아래로 하강 (놓기) ──
-      case STATE_DESCEND_A2: {
-        Serial.println("[CYCLE] A↓(놓기)");
-        MotionCommand cmd = {pointA_down.steps_base, pointA_down.steps_shoulder, pointA_down.steps_elbow, vertSpeedUs, activeProfile, false};
-        if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
-          xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
-        }
-        delay(100);
-        currentState = STATE_PLACE_A;
-        break;
-      }
-
-      case STATE_PLACE_A:
-        vacuumRelease(releaseDelayMs);
-        currentState = STATE_ASCEND_A2;
-        break;
-
-      // ── A위로 상승 → 1사이클 완료 ──
-      case STATE_ASCEND_A2: {
-        MotionCommand cmd = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, vertSpeedUs, activeProfile, false};
-        if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
-          xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
-        }
-        delay(200);
+        delay(500);
+        
         cycleCount++;
-        Serial.printf("[CYCLE] 사이클 #%d 완료! (왕복)\n", (int)cycleCount);
-        if (webCmd_ContinuousCycle) {
-          currentState = STATE_MOVE_TO_A;  // 다시 Phase 1
-        } else {
-          currentState = STATE_IDLE;
-        }
+        Serial.printf("[CYCLE] 단일 사이클 %d회 완료!\n", (int)cycleCount);
+        currentState = STATE_IDLE; // 단일 사이클 완료 후 정지
         break;
       }
-        break;
     }
 
     // 센서는 loop()에서 읽음 (웹서버와 같은 주기로 항상 갱신)
