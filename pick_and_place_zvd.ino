@@ -157,7 +157,7 @@ enum PickPlaceState {
   STATE_RETURN                // 홈 복귀
 };
 
-volatile PickPlaceState currentState = STATE_HOMING;
+volatile PickPlaceState currentState = STATE_IDLE;
 String stateStrings[] = {"Homing...", "IDLE", "Approach A", "Picking", "Transfer (ZVD)", "Place & Release", "Return Home"};
 
 // 웹 서버 인스턴스 (포트 80)
