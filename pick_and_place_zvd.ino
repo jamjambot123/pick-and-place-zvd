@@ -987,12 +987,12 @@ void taskControl(void* pv) {
       case STATE_MOVE_TO_A: {
         Serial.printf("[CYCLE] → A위 (steps: %d,%d,%d)\n",
           (int)pointA_up.steps_base, (int)pointA_up.steps_shoulder, (int)pointA_up.steps_elbow);
-        MotionCommand cmd = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, 800, true, false};
+        MotionCommand cmd = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, 800, false, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
         delay(200);
-        currentState = STATE_DESCEND_A;
+        currentState = STATE_PICK;  // 펠프 먼저 ON
         break;
       }
 
@@ -1003,20 +1003,22 @@ void taskControl(void* pv) {
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
-        delay(100);
-        currentState = STATE_PICK;
+        delay(gripDelayMs);  // 흡착 대기
+        currentState = STATE_ASCEND_A;
         break;
       }
 
-      // ── 진공 흡착 ──
+      // ── 진공 흡착 (하강 전 펠프 ON) ──
       case STATE_PICK:
-        vacuumGrip(gripDelayMs);
-        currentState = STATE_ASCEND_A;
+        digitalWrite(RELAY_VACUUM_PUMP, RELAY_ON);
+        delay(300);  // 흡입력 확보
+        Serial.println("[CYCLE] 펠프ON");
+        currentState = STATE_DESCEND_A;
         break;
 
       // ── A위로 상승 ──
       case STATE_ASCEND_A: {
-        MotionCommand cmd = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, 2500, true, false};
+        MotionCommand cmd = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, 2500, false, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
@@ -1029,7 +1031,7 @@ void taskControl(void* pv) {
       case STATE_MOVE_TO_B: {
         Serial.printf("[CYCLE] → B위 (steps: %d,%d,%d)\n",
           (int)pointB_up.steps_base, (int)pointB_up.steps_shoulder, (int)pointB_up.steps_elbow);
-        MotionCommand cmd = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, 800, true, false};
+        MotionCommand cmd = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, 800, false, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
@@ -1058,12 +1060,12 @@ void taskControl(void* pv) {
 
       // ── B위로 상승 후 반복 ──
       case STATE_ASCEND_B: {
-        MotionCommand cmd = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, 2500, true, false};
+        MotionCommand cmd = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, 2500, false, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
         delay(200);
-        currentState = STATE_DESCEND_B2;  // → Phase 2: B에서 다시 집기
+        currentState = STATE_PICK_B;  // 펠프 먼저 ON
         break;
       }
 
@@ -1076,18 +1078,20 @@ void taskControl(void* pv) {
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
-        delay(100);
-        currentState = STATE_PICK_B;
+        delay(gripDelayMs);  // 흡착 대기
+        currentState = STATE_ASCEND_B2;
         break;
       }
 
       case STATE_PICK_B:
-        vacuumGrip(gripDelayMs);
-        currentState = STATE_ASCEND_B2;
+        digitalWrite(RELAY_VACUUM_PUMP, RELAY_ON);
+        delay(300);
+        Serial.println("[CYCLE] 펠프ON(B)");
+        currentState = STATE_DESCEND_B2;
         break;
 
       case STATE_ASCEND_B2: {
-        MotionCommand cmd = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, 2500, true, false};
+        MotionCommand cmd = {pointB_up.steps_base, pointB_up.steps_shoulder, pointB_up.steps_elbow, 2500, false, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
@@ -1099,7 +1103,7 @@ void taskControl(void* pv) {
       // ── A위로 복귀 ──
       case STATE_RETURN_A: {
         Serial.println("[CYCLE] →A위(복귀)");
-        MotionCommand cmd = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, 2500, true, false};
+        MotionCommand cmd = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, 2500, false, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
@@ -1127,7 +1131,7 @@ void taskControl(void* pv) {
 
       // ── A위로 상승 → 1사이클 완료 ──
       case STATE_ASCEND_A2: {
-        MotionCommand cmd = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, 2500, true, false};
+        MotionCommand cmd = {pointA_up.steps_base, pointA_up.steps_shoulder, pointA_up.steps_elbow, 2500, false, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
