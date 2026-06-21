@@ -1083,28 +1083,28 @@ void taskControl(void* pv) {
           if (xQueueSend(motionQueue, &cmd2, pdMS_TO_TICKS(1000)) == pdTRUE) xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
         delay(500); // 하강 전 진동 안정화 딜레이
-        currentState = STATE_PICK;
+        currentState = STATE_DESCEND_A;
         break;
       }
 
-      // ── A아래로 하강 (관절 직접 이동, IK 없음) ──
+      // ── A아래로 하강 ──
       case STATE_DESCEND_A: {
         Serial.println("[CYCLE] A↓");
         MotionCommand cmd = {pointA_down.steps_base, pointA_down.steps_shoulder, pointA_down.steps_elbow, vertSpeedUs, activeProfile, false};
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
-        delay(gripDelayMs);  // 흡착 대기
-        currentState = STATE_ASCEND_A;
+        delay(100);
+        currentState = STATE_PICK;
         break;
       }
 
-      // ── 진공 흡착 (하강 전 펠프 ON) ──
+      // ── 진공 흡착 (바닥에서 펠프 ON) ──
       case STATE_PICK:
         digitalWrite(RELAY_VACUUM_PUMP, RELAY_ON);
-        delay(300);  // 흡입력 확보
-        Serial.println("[CYCLE] 펠프ON");
-        currentState = STATE_DESCEND_A;
+        delay(gripDelayMs);  // 흡입력 확보 대기
+        Serial.println("[CYCLE] 펠프ON (A)");
+        currentState = STATE_ASCEND_A;
         break;
 
       // ── A위로 상승 ──
@@ -1166,7 +1166,7 @@ void taskControl(void* pv) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
         delay(200);
-        currentState = STATE_PICK_B;  // 펠프 먼저 ON
+        currentState = STATE_DESCEND_B2; 
         break;
       }
 
@@ -1179,16 +1179,16 @@ void taskControl(void* pv) {
         if (xQueueSend(motionQueue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
           xSemaphoreTake(motionDoneSem, pdMS_TO_TICKS(30000));
         }
-        delay(gripDelayMs);  // 흡착 대기
-        currentState = STATE_ASCEND_B2;
+        delay(100);
+        currentState = STATE_PICK_B;
         break;
       }
 
       case STATE_PICK_B:
         digitalWrite(RELAY_VACUUM_PUMP, RELAY_ON);
-        delay(300);
-        Serial.println("[CYCLE] 펠프ON(B)");
-        currentState = STATE_DESCEND_B2;
+        delay(gripDelayMs); // 흡입력 확보 대기
+        Serial.println("[CYCLE] 펠프ON (B)");
+        currentState = STATE_ASCEND_B2;
         break;
 
       case STATE_ASCEND_B2: {
